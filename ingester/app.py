@@ -19,7 +19,7 @@ from influxdb import InfluxDBClient
 ZIP_PATH = "/export.zip"
 ROUTES_PATH = "/export/apple_health_export/workout-routes/"
 EXPORT_PATH = "/export/apple_health_export"
-EXPORT_XML_REGEX = re.compile("(export|导出)\\.xml",re.IGNORECASE)
+EXPORT_XML_REGEX = re.compile(r"(export|导出|dati esportati)\.xml",re.IGNORECASE)
 
 points_sources = set()
 
@@ -131,7 +131,7 @@ def process_health_data(client: InfluxDBClient) -> None:
     print("Export file is",export_file)
 
     print("Removing potentially malformed XML..")
-    p = subprocess.run("sed -i '/<HealthData/,$!d' "+export_file,shell=True,capture_output=True)
+    p = subprocess.run(["sed", "-i", "/<HealthData/,$!d", export_file], capture_output=True)
     if p.returncode != 0:
         print(p.stdout,p.stderr)
 
