@@ -34,3 +34,9 @@ services:
     build: ../ingester
     volumes:
     - ./test-export-cn.zip:/export.zip
+
+  # test the parsing with a italian export.xml file
+  test-ingester-ita:
+    build: ../ingester
+    volumes:
+    - ./test-export-ita.zip:/export.zip
