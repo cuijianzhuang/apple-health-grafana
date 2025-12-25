@@ -1,6 +1,8 @@
 # Apple Health Grafana
 
-Tool to import your Apple Health Data in Influx and visualize them in Grafana.
+Tool to import your Apple Health Data in Influx and visualize them in Grafana at a point in time.
+
+This is not a 'live' dashboard for uploading your activities routinely (eg daily), but a tool for vizualizing long term trends, aggregated statistics over a bigger timespan, or for showing up at a medical appointment with some data to show, etc.. 
 
 - ### Overall Fitness / Energy / Activity dashboard 
   ![metrics](example1.png)
