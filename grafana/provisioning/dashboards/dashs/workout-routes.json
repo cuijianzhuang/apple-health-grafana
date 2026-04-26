@@ -112,7 +112,7 @@
           ]
         }
       ],
-      "title": "Start time",
+      "title": "开始时间",
       "transformations": [],
       "transparent": true,
       "type": "stat"
@@ -423,7 +423,7 @@
           ]
         }
       ],
-      "title": "End time",
+      "title": "结束时间",
       "transparent": true,
       "type": "stat"
     },
@@ -526,7 +526,7 @@
           ]
         }
       ],
-      "title": "Distance",
+      "title": "距离",
       "transparent": true,
       "type": "stat"
     },
@@ -649,7 +649,7 @@
           ]
         }
       ],
-      "title": "Elevation",
+      "title": "海拔爬升",
       "transformations": [
         {
           "id": "calculateField",
@@ -830,7 +830,7 @@
           ]
         }
       ],
-      "title": "Speed",
+      "title": "速度",
       "transformations": [],
       "transparent": true,
       "type": "stat"
@@ -876,7 +876,7 @@
     "refresh_intervals": []
   },
   "timezone": "",
-  "title": "Workout routes",
+  "title": "运动路线",
   "uid": "KU8Nj714z",
   "version": 5,
   "weekStart": ""

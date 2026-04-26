@@ -36,7 +36,7 @@
         "y": 0
       },
       "id": 21,
-      "title": "Yearly Activity",
+      "title": "年度活动",
       "type": "row"
     },
     {
@@ -340,7 +340,7 @@
       },
       "id": 12,
       "panels": [],
-      "title": "Daily Activity",
+      "title": "每日活动",
       "type": "row"
     },
     {
@@ -483,7 +483,7 @@
           ]
         }
       ],
-      "title": "Distance walked per day",
+      "title": "每日步行距离",
       "transformations": [
         {
           "id": "calculateField",
@@ -628,7 +628,7 @@
           "tags": []
         }
       ],
-      "title": "Distance cycled per day",
+      "title": "每日骑行距离",
       "type": "timeseries"
     },
     {
@@ -760,7 +760,7 @@
           "tags": []
         }
       ],
-      "title": "Minutes of exercise per day",
+      "title": "每日锻炼时长（分钟）",
       "type": "timeseries"
     },
     {
@@ -904,7 +904,7 @@
           ]
         }
       ],
-      "title": "Steps per day",
+      "title": "每日步数",
       "transformations": [
         {
           "id": "calculateField",
@@ -1054,7 +1054,7 @@
           "tags": []
         }
       ],
-      "title": "Flights climbed  per day",
+      "title": "每日爬楼层数",
       "type": "timeseries"
     },
     {
@@ -1306,7 +1306,7 @@
           "tags": []
         }
       ],
-      "title": "Energy burned per day",
+      "title": "每日消耗能量",
       "type": "timeseries"
     },
     {
@@ -1433,7 +1433,7 @@
           "tags": []
         }
       ],
-      "title": "Time spent standing up per day",
+      "title": "每日站立时间",
       "type": "timeseries"
     },
     {
@@ -1561,7 +1561,7 @@
           "tags": []
         }
       ],
-      "title": "Average walking speed",
+      "title": "平均步行速度",
       "type": "timeseries"
     },
     {
@@ -1574,7 +1574,7 @@
       },
       "id": 10,
       "panels": [],
-      "title": "Heart infos",
+      "title": "心率概况",
       "type": "row"
     },
     {
@@ -1762,7 +1762,7 @@
           "tags": []
         }
       ],
-      "title": "Heart infos (per day)",
+      "title": "心率概况（按日）",
       "type": "timeseries"
     },
     {
@@ -1939,7 +1939,7 @@
           "tags": []
         }
       ],
-      "title": "Min/Max heart rate (per day)",
+      "title": "每日最低/最高心率",
       "type": "timeseries"
     },
     {
@@ -2067,7 +2067,7 @@
           "tags": []
         }
       ],
-      "title": "Heart rate variability",
+      "title": "心率变异性",
       "type": "timeseries"
     },
     {
@@ -2244,7 +2244,7 @@
           "tags": []
         }
       ],
-      "title": "Number of low and high heart rate events per day ",
+      "title": "每日心率过低/过高事件次数",
       "type": "timeseries"
     },
     {
@@ -2487,7 +2487,7 @@
           "tags": []
         }
       ],
-      "title": "Heart rate through the day",
+      "title": "全天心率",
       "type": "timeseries"
     },
     {
@@ -2500,7 +2500,7 @@
       },
       "id": 24,
       "panels": [],
-      "title": "Sleep data",
+      "title": "睡眠数据",
       "type": "row"
     },
     {
@@ -2648,7 +2648,7 @@
           ]
         }
       ],
-      "title": "Times in bed/sleeping",
+      "title": "就寝与入睡时间",
       "type": "timeseries"
     },
     {
@@ -2789,7 +2789,7 @@
           ]
         }
       ],
-      "title": "Durations of time in bed",
+      "title": "卧床与睡眠时长",
       "type": "timeseries"
     },
     {
@@ -3063,7 +3063,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Apple health specific metrics",
+  "title": "苹果健康 · 分项指标",
   "uid": "specific-metrics",
   "version": 5,
   "weekStart": ""

@@ -1,6 +1,8 @@
 services:
   grafana:
     build: ./grafana
+    environment:
+      - GF_DEFAULT_LANGUAGE=zh-Hans
     ports:
     - 3000:3000
   influx:
@@ -13,6 +15,16 @@ services:
     build: ./ingester
     volumes:
     - ./tests/test-export.zip:/export.zip
+
+  api:
+    build: ./ingester
+    command: ["api.py"]
+    ports:
+    - 5353:5353
+    environment:
+      - INFLUX_HOST=influx
+      - INFLUX_DB=health
+      - API_PORT=5353
 
 volumes:
   influx-data:

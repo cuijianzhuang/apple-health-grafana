@@ -25,7 +25,8 @@ points_sources = set()
 
 def format_route_point(
     name: str, point: GPXTrackPoint, next_point=None
-) -> dict[str, Any]:
+) -> (
+        dict)[str, Any]:
     """for a given `point`, creates an influxdb point
     and computes speed and distance if `next_point` exists"""
     slug_name = name.replace(" ", "-").replace(":", "-").lower()
@@ -97,7 +98,7 @@ def parse_workout_route(client: InfluxDBClient, route_xml_file: str) -> None:
         gpx = gpxpy.parse(gpx_file)
         for track in gpx.tracks:
             track_points = []
-            print("Opening", track.name)
+            print("正在打开路线：", track.name)
             for segment in track.segments:
                 num_points = len(segment.points)
                 for i in range(num_points):
@@ -113,24 +114,24 @@ def parse_workout_route(client: InfluxDBClient, route_xml_file: str) -> None:
 
 def process_workout_routes(client: InfluxDBClient) -> None:
     if os.path.exists(ROUTES_PATH) and os.path.isdir(ROUTES_PATH):
-        print("Loading workout routes ...")
+        print("正在加载运动路线 GPX …")
         for file in os.listdir(ROUTES_PATH):
             if file.endswith(".gpx"):
                 route_file = os.path.join(ROUTES_PATH, file)
                 parse_workout_route(client, route_file)
     else:
-        print("No workout routes found, skipping ...")
+        print("未找到运动路线目录，跳过 GPX 导入。")
 
 
 def process_health_data(client: InfluxDBClient) -> None:
     export_xml_files = [f for f in os.listdir(EXPORT_PATH) if EXPORT_XML_REGEX.match(f)]
     if not export_xml_files:
-        print("No export file found, skipping...")
+        print("未找到 export.xml / 导出.xml，跳过健康记录导入。")
         return
     export_file = os.path.join(EXPORT_PATH,export_xml_files[0])
-    print("Export file is",export_file)
+    print("导出文件：", export_file)
 
-    print("Removing potentially malformed XML..")
+    print("正在清理可能损坏的 XML 前缀 …")
     p = subprocess.run(["sed", "-i", "/<HealthData/,$!d", export_file], capture_output=True)
     if p.returncode != 0:
         print(p.stdout,p.stderr)
@@ -157,11 +158,11 @@ def process_health_data(client: InfluxDBClient) -> None:
 
             del records
             records = []
-            print("Inserted", total_count, "records")
+            print("已写入", total_count, "条记录")
 
     # push the rest
     client.write_points(records, time_precision="s")
-    print("Total number of records:", total_count + len(records))
+    print("记录总数：", total_count + len(records))
 
 def push_sources(client: InfluxDBClient):
     sources_points = [{
@@ -170,17 +171,17 @@ def push_sources(client: InfluxDBClient):
         "fields":{"value":1}
     }
     for s in points_sources]
-    print("pushing",len(sources_points),"sources !")
+    print("正在写入数据来源标签，共", len(sources_points), "个来源。")
     client.write_points(sources_points,time_precision="s")
 
 if __name__ == "__main__":
-    print("Unzipping the export file...")
+    print("正在解压导出压缩包 …")
     try:
         unpack_archive(ZIP_PATH, "/export")
     except Exception as unzip_err:
-        print("Unable to open export zip:", unzip_err)
+        print("无法打开导出 zip：", unzip_err)
         exit(1)
-    print("Export file unzipped!")
+    print("解压完成。")
 
     client = InfluxDBClient("influx", 8086, database="health")
 
@@ -189,13 +190,13 @@ if __name__ == "__main__":
             client.ping()
             client.drop_database("health")
             client.create_database("health")
-            print("Influx is ready.")
+            print("InfluxDB 已就绪。")
             break
         except Exception:
-            print("Waiting on influx to be ready..")
+            print("等待 InfluxDB 就绪 …")
             time.sleep(1)
 
     process_workout_routes(client)
     process_health_data(client)
     push_sources(client)
-    print("All done! You can now check grafana.")
+    print("全部完成。请在浏览器中打开 Grafana 查看仪表板。")

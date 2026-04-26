@@ -173,7 +173,7 @@
           "tags": []
         }
       ],
-      "title": "Sleep analysis",
+      "title": "睡眠分析",
       "type": "timeseries"
     },
     {
@@ -421,7 +421,7 @@
           ]
         }
       ],
-      "title": "Time in each sleep category ",
+      "title": "各睡眠阶段时长",
       "type": "stat"
     },
     {
@@ -1167,7 +1167,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Sleep tracking dashboard",
+  "title": "睡眠追踪",
   "uid": "a46f7443-1bc1-478d-8100-40c05aef654c",
   "version": 9,
   "weekStart": ""

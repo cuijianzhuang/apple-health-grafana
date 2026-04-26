@@ -1,6 +1,6 @@
 apiVersion: 1
 datasources:
-- name: influx
+- name: 健康数据
   type: influxdb
   uid: influx
   isDefault: true
