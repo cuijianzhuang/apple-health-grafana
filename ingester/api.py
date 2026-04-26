@@ -282,10 +282,30 @@ def ingest():
     workouts_list = data.get("workouts", [])
 
     points: list[dict] = []
+    devices: set[str] = set()
     for m in metrics_list:
-        points.extend(_convert_metric(m))
+        converted = _convert_metric(m)
+        points.extend(converted)
+        for p in converted:
+            dev = p.get("tags", {}).get("device")
+            if dev:
+                devices.add(dev)
     for w in workouts_list:
-        points.extend(_convert_workout(w))
+        converted = _convert_workout(w)
+        points.extend(converted)
+        for p in converted:
+            dev = p.get("tags", {}).get("device")
+            if dev:
+                devices.add(dev)
+
+    # Keep compatibility with existing dashboards that query source devices
+    # from measurement "data-sources".
+    for dev in devices:
+        points.append({
+            "measurement": "data-sources",
+            "fields": {"value": 1},
+            "tags": {"device": dev},
+        })
 
     if not points:
         log.info("收到请求但未解析到有效数据点。")
