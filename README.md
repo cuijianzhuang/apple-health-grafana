@@ -16,13 +16,13 @@
 服务器上只需安装 Docker，一条命令即可完成全部部署：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/k0rventen/apple-health-grafana/main/deploy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cuijianzhaung/apple-health-grafana/main/deploy.sh | bash
 ```
 
 或者手动执行：
 
 ```bash
-git clone https://github.com/k0rventen/apple-health-grafana.git
+git clone https://github.com/cuijianzhaung/apple-health-grafana.git
 cd apple-health-grafana
 cp .env.example .env   # 按需修改配置
 docker compose up -d --build
