@@ -50,6 +50,7 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "noValue": "暂无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -58,39 +59,33 @@
                 "value": null
               },
               {
-                "color": "light-blue",
-                "value": 100
-              },
-              {
                 "color": "blue",
-                "value": 1000
+                "value": 10
               },
               {
                 "color": "semi-dark-blue",
-                "value": 10000
-              },
-              {
-                "color": "dark-blue",
-                "value": 100000
+                "value": 30
               }
             ]
           },
-          "unitScale": true
+          "unitScale": true,
+          "decimals": 1,
+          "unit": "lengthkm"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 1
       },
       "id": 23,
       "options": {
         "colorMode": "background",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "center",
-        "orientation": "auto",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -99,66 +94,13 @@
           "values": false
         },
         "showPercentChange": false,
-        "textMode": "value_and_name",
+        "textMode": "value",
         "wideLayout": true
       },
       "pluginVersion": "10.3.3",
       "targets": [
         {
-          "alias": "Cycled distance this year ($tag_unit)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influx"
-          },
-          "groupBy": [],
-          "measurement": "BodyMass",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\") FROM \"DistanceCycling\" WHERE (\"device\" =~ /^$source$/) AND  time > now() - 365d GROUP BY \"unit\"",
-          "rawQuery": true,
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": []
-        },
-        {
-          "alias": "Distance swam this year (km)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influx"
-          },
-          "groupBy": [],
-          "hide": false,
-          "measurement": "DistanceSwimming",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\")/1000 FROM \"DistanceSwimming\" WHERE (\"device\" =~ /^$source$/) AND  time > now() - 365d GROUP BY \"unit\"",
-          "rawQuery": true,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": []
-        },
-        {
-          "alias": "Walked/ran distance this year ($tag_unit)",
+          "alias": "步行/跑步距离",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -190,43 +132,74 @@
             ]
           ],
           "tags": []
-        },
-        {
-          "alias": "Flights climbed this year ($tag_unit)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influx"
+        }
+      ],
+      "type": "stat",
+      "title": "今年步行/跑步距离",
+      "transparent": false
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "influx"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
           },
-          "groupBy": [
-            {
-              "params": [
-                "unit"
-              ],
-              "type": "tag"
-            }
-          ],
-          "hide": false,
-          "measurement": "DistanceWalkingRunning",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\") FROM \"FlightsClimbed\" WHERE (\"device\" =~ /^$source$/) AND  time > now() - 365d GROUP BY \"unit\"",
-          "rawQuery": true,
-          "refId": "D",
-          "resultFormat": "time_series",
-          "select": [
-            [
+          "mappings": [],
+          "noValue": "暂无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 50000
+              },
+              {
+                "color": "semi-dark-blue",
+                "value": 100000
               }
             ]
-          ],
-          "tags": []
+          },
+          "unitScale": true,
+          "decimals": 0,
+          "unit": "none"
         },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 101,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "pluginVersion": "10.3.3",
+      "targets": [
         {
-          "alias": "Steps this year ($tag_unit)",
+          "alias": "总步数",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -258,77 +231,11 @@
             ]
           ],
           "tags": []
-        },
-        {
-          "alias": "Hours exercising (hours)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influx"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "unit"
-              ],
-              "type": "tag"
-            }
-          ],
-          "hide": false,
-          "measurement": "DistanceWalkingRunning",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\")/60 FROM \"AppleExerciseTime\" WHERE (\"device\" =~ /^$source$/) AND  time > now() - 365d GROUP BY \"unit\"",
-          "rawQuery": true,
-          "refId": "H",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": []
-        },
-        {
-          "alias": "Hours standing up year (hours)",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "influx"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "unit"
-              ],
-              "type": "tag"
-            }
-          ],
-          "hide": false,
-          "measurement": "DistanceWalkingRunning",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT sum(\"value\")/60 FROM \"AppleStandTime\" WHERE (\"device\" =~ /^$source$/) AND  time > now() - 365d GROUP BY \"unit\"",
-          "rawQuery": true,
-          "refId": "G",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              }
-            ]
-          ],
-          "tags": []
         }
       ],
-      "type": "stat"
+      "type": "stat",
+      "title": "今年总步数",
+      "transparent": false
     },
     {
       "collapsed": false,
@@ -1199,7 +1106,7 @@
       },
       "targets": [
         {
-          "alias": "Active Energy",
+          "alias": "活动能量",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -1252,7 +1159,7 @@
           "tags": []
         },
         {
-          "alias": "Basal Energy",
+          "alias": "基础能量",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -1655,7 +1562,7 @@
       },
       "targets": [
         {
-          "alias": "Walking heart rate",
+          "alias": "步行心率",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -1708,7 +1615,7 @@
           "tags": []
         },
         {
-          "alias": "Resting heart rate",
+          "alias": "静息心率",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -1843,7 +1750,7 @@
       },
       "targets": [
         {
-          "alias": "Lowest heart rate",
+          "alias": "最低心率",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -1891,7 +1798,7 @@
           "tags": []
         },
         {
-          "alias": "Highest heart rate",
+          "alias": "最高心率",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2148,7 +2055,7 @@
       },
       "targets": [
         {
-          "alias": "Low heart rate events",
+          "alias": "低心率事件",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2196,7 +2103,7 @@
           "tags": []
         },
         {
-          "alias": "High heart rate events",
+          "alias": "高心率事件",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2391,7 +2298,7 @@
       },
       "targets": [
         {
-          "alias": "Active time",
+          "alias": "活动时长",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2439,7 +2346,7 @@
           "tags": []
         },
         {
-          "alias": "Heart rate",
+          "alias": "心率",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2840,7 +2747,7 @@
       "pluginVersion": "9.5.3",
       "targets": [
         {
-          "alias": "Sleep Goal",
+          "alias": "睡眠目标",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2932,7 +2839,7 @@
       "pluginVersion": "9.5.3",
       "targets": [
         {
-          "alias": "Total time spent in bed ($tag_device)",
+          "alias": "卧床总时长（$tag_device）",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -2976,7 +2883,7 @@
           ]
         },
         {
-          "alias": "Total time spent asleep ($tag_device)",
+          "alias": "睡眠总时长（$tag_device）",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
@@ -3065,6 +2972,6 @@
   "timezone": "",
   "title": "苹果健康 · 分项指标",
   "uid": "specific-metrics",
-  "version": 5,
+  "version": 6,
   "weekStart": ""
 }
