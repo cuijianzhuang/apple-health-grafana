@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-REPO_URL="https://github.com/k0rventen/apple-health-grafana.git"
+REPO_URL="https://github.com/cuijianzhuang/apple-health-grafana.git"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/apple-health-grafana}"
 
 GREEN='\033[0;32m'
