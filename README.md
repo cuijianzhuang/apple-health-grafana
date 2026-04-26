@@ -41,6 +41,7 @@ docker compose up -d --build
 | `GRAFANA_ADMIN_USER` | `admin` | Grafana 管理员用户名 |
 | `GRAFANA_ADMIN_PASSWORD` | `health` | Grafana 管理员密码 |
 | `GRAFANA_PORT` | `3000` | Grafana 映射端口 |
+| `GRAFANA_ROOT_URL` | `http://localhost:3000` | Grafana 对外访问地址，用于生成公开看板链接 |
 | `INFLUX_DB` | `health` | InfluxDB 数据库名 |
 | `API_PORT` | `5353` | Health Auto Export API 端口 |
 | `API_KEY` | _(空)_ | API 鉴权密钥，设置后客户端需带 `X-API-Key` 请求头 |
