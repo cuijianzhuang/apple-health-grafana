@@ -24,8 +24,6 @@ services:
   ingester:
     build: ./ingester
     profiles: ["import"]
-    volumes:
-      - ${EXPORT_ZIP:-./export.zip}:/export.zip
     depends_on:
       - influx
 
