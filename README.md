@@ -101,6 +101,7 @@ docker compose run --rm -e RESET_INFLUX=true -v /path/to/export.zip:/export.zip 
 
 登录 Grafana 后默认有以下仪表板：
 - **Health Auto Export 概览** — 推荐首页，适配 REST API 实时同步数据
+- **Health Auto Export 公开概览** — 无模板变量版本，适合 Grafana Public Dashboard 外部分享
 - **苹果健康（全部指标）** — 所有可用指标的通用视图
 - **苹果健康 · 分项指标** — 步数、心率、睡眠等常见指标的精细视图
 - **运动路线** — 户外运动的 GPS 轨迹地图
@@ -123,6 +124,28 @@ docker compose restart          # 重启服务
 docker compose down             # 停止服务
 docker compose up -d --build    # 重新构建并启动
 ```
+
+---
+
+## GitHub Actions 自动部署
+
+仓库包含 `Deploy server` workflow。推送到 `main` 或手动触发 workflow 后，会通过 SSH 登录服务器并执行：
+
+```bash
+cd $SERVER_APP_DIR
+git pull
+docker compose up -d --build
+```
+
+需要在 GitHub 仓库的 `Settings → Secrets and variables → Actions` 中配置：
+
+| Secret | 说明 |
+|--------|------|
+| `SERVER_HOST` | 服务器 IP 或域名 |
+| `SERVER_USER` | SSH 用户名，例如 `root` |
+| `SERVER_PORT` | SSH 端口，例如 `22` |
+| `SERVER_SSH_KEY` | SSH 私钥内容 |
+| `SERVER_APP_DIR` | 项目目录，例如 `/root/apple-health-grafana` |
 
 ---
 
