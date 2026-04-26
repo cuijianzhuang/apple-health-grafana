@@ -100,6 +100,7 @@ docker compose run --rm -e RESET_INFLUX=true -v /path/to/export.zip:/export.zip 
 ## 可视化
 
 登录 Grafana 后默认有以下仪表板：
+- **Health Auto Export 概览** — 推荐首页，适配 REST API 实时同步数据
 - **苹果健康（全部指标）** — 所有可用指标的通用视图
 - **苹果健康 · 分项指标** — 步数、心率、睡眠等常见指标的精细视图
 - **运动路线** — 户外运动的 GPS 轨迹地图
