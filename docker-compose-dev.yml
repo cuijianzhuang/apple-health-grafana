@@ -2,7 +2,7 @@ services:
   grafana:
     build: ./grafana
     environment:
-      - GF_DEFAULT_LANGUAGE=zh-Hans
+      - GF_USERS_DEFAULT_LANGUAGE=zh-Hans
     ports:
     - 3000:3000
   influx:
