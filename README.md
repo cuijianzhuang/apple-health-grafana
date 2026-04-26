@@ -86,6 +86,12 @@ API 端点说明：
 docker compose run --rm -v /path/to/export.zip:/export.zip ingester
 ```
 
+默认情况下，zip 导入会追加写入数据，不会清空已有 InfluxDB 数据。若确实要重建数据库，可显式加上：
+
+```bash
+docker compose run --rm -e RESET_INFLUX=true -v /path/to/export.zip:/export.zip ingester
+```
+
 > 注意：根据数据量不同，导入可能需要几分钟。约 200 万条数据在 i5 上约 2 分钟，树莓派 4 上约 11 分钟。
 
 ---

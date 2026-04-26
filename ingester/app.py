@@ -20,6 +20,7 @@ ZIP_PATH = "/export.zip"
 ROUTES_PATH = "/export/apple_health_export/workout-routes/"
 EXPORT_PATH = "/export/apple_health_export"
 EXPORT_XML_REGEX = re.compile(r"(export|导出|dati esportati)\.xml",re.IGNORECASE)
+RESET_INFLUX = os.getenv("RESET_INFLUX", "false").lower() in ("1", "true", "yes")
 
 points_sources = set()
 
@@ -123,12 +124,36 @@ def process_workout_routes(client: InfluxDBClient) -> None:
         print("未找到运动路线目录，跳过 GPX 导入。")
 
 
+def find_export_xml() -> str | None:
+    """Find Apple Health export XML in common localized export archives."""
+    xml_files = []
+    for root, _, files in os.walk("/export"):
+        for file in files:
+            if file.lower().endswith(".xml"):
+                xml_files.append(os.path.join(root, file))
+
+    for xml_file in xml_files:
+        if EXPORT_XML_REGEX.match(os.path.basename(xml_file)):
+            return xml_file
+
+    for xml_file in xml_files:
+        try:
+            with open(xml_file, "rb") as file:
+                if b"<HealthData" in file.read(1024 * 1024):
+                    return xml_file
+        except OSError:
+            continue
+
+    if xml_files:
+        print("找到 XML 文件但无法识别为 Apple 健康导出：", xml_files)
+    return None
+
+
 def process_health_data(client: InfluxDBClient) -> None:
-    export_xml_files = [f for f in os.listdir(EXPORT_PATH) if EXPORT_XML_REGEX.match(f)]
-    if not export_xml_files:
+    export_file = find_export_xml()
+    if not export_file:
         print("未找到 export.xml / 导出.xml，跳过健康记录导入。")
         return
-    export_file = os.path.join(EXPORT_PATH,export_xml_files[0])
     print("导出文件：", export_file)
 
     print("正在清理可能损坏的 XML 前缀 …")
@@ -188,7 +213,9 @@ if __name__ == "__main__":
     while True:
         try:
             client.ping()
-            client.drop_database("health")
+            if RESET_INFLUX:
+                print("RESET_INFLUX=true，正在清空 InfluxDB health 数据库。")
+                client.drop_database("health")
             client.create_database("health")
             print("InfluxDB 已就绪。")
             break
