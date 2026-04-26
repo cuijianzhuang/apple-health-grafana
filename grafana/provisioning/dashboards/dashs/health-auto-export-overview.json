@@ -52,7 +52,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "blue",
                 "value": null
               },
               {
@@ -60,7 +60,7 @@
                 "value": 6000
               },
               {
-                "color": "semi-dark-blue",
+                "color": "dark-blue",
                 "value": 10000
               }
             ]
@@ -88,7 +88,11 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 30
+        },
         "textMode": "value_and_name",
         "wideLayout": true
       },
@@ -125,7 +129,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "super-light-blue",
+                "color": "blue",
                 "value": null
               },
               {
@@ -133,7 +137,7 @@
                 "value": 3
               },
               {
-                "color": "semi-dark-blue",
+                "color": "dark-blue",
                 "value": 6
               }
             ]
@@ -161,7 +165,11 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 30
+        },
         "textMode": "value_and_name",
         "wideLayout": true
       },
@@ -198,7 +206,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "purple",
+                "color": "blue",
                 "value": null
               },
               {
@@ -206,12 +214,12 @@
                 "value": 60
               },
               {
-                "color": "green",
+                "color": "dark-blue",
                 "value": 70
               }
             ]
           },
-          "unit": "lengthcm"
+          "unit": "cm"
         },
         "overrides": []
       },
@@ -234,7 +242,11 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 30
+        },
         "textMode": "value_and_name",
         "wideLayout": true
       },
@@ -271,15 +283,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "blue",
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "semi-dark-blue",
                 "value": 1
               },
               {
-                "color": "red",
+                "color": "dark-blue",
                 "value": 3
               }
             ]
@@ -307,7 +319,11 @@
           "fields": "",
           "values": false
         },
-        "showPercentChange": true,
+        "showPercentChange": false,
+        "text": {
+          "titleSize": 14,
+          "valueSize": 30
+        },
         "textMode": "value_and_name",
         "wideLayout": true
       },
@@ -583,7 +599,7 @@
               }
             ]
           },
-          "unit": "lengthcm"
+          "unit": "cm"
         },
         "overrides": []
       },
