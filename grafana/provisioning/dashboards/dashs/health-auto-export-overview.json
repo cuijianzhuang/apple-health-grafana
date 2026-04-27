@@ -446,7 +446,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d), \"unit\" fill(null)",
+          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d, 16h), \"unit\" fill(null)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -541,7 +541,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"DistanceWalkingRunning\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d), \"unit\" fill(null)",
+          "query": "SELECT sum(\"value\") FROM \"DistanceWalkingRunning\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d, 16h), \"unit\" fill(null)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -636,7 +636,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT mean(\"value\") FROM \"WalkingStepLength\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d), \"unit\" fill(null)",
+          "query": "SELECT mean(\"value\") FROM \"WalkingStepLength\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d, 16h), \"unit\" fill(null)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -731,7 +731,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT mean(\"value\") FROM \"WalkingAsymmetryPercentage\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d), \"unit\" fill(null)",
+          "query": "SELECT mean(\"value\") FROM \"WalkingAsymmetryPercentage\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1d, 16h), \"unit\" fill(null)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
