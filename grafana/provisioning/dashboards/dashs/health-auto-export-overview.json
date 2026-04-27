@@ -99,18 +99,18 @@
       },
       "targets": [
         {
-          "alias": "今日步数",
+          "alias": "今日步数（去重近似）",
           "datasource": {
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
+          "query": "SELECT sum(\"v\") FROM (SELECT max(\"value\") AS \"v\" FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time(1m) fill(none))",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
         }
       ],
-      "title": "今日步数",
+      "title": "今日步数（去重近似）",
       "type": "stat"
     },
     {
