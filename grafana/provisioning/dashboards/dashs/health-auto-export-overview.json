@@ -76,6 +76,7 @@
         "y": 1
       },
       "id": 2,
+      "timeFrom": "now/d",
       "options": {
         "colorMode": "background",
         "graphMode": "area",
@@ -103,7 +104,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND time >= now() - 1d GROUP BY \"unit\"",
+          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -153,6 +154,7 @@
         "y": 1
       },
       "id": 3,
+      "timeFrom": "now/d",
       "options": {
         "colorMode": "background",
         "graphMode": "area",
@@ -180,7 +182,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"DistanceWalkingRunning\" WHERE (\"device\" =~ /^$source$/) AND time >= now() - 1d GROUP BY \"unit\"",
+          "query": "SELECT sum(\"value\") FROM \"DistanceWalkingRunning\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -230,6 +232,7 @@
         "y": 1
       },
       "id": 4,
+      "timeFrom": "now/d",
       "options": {
         "colorMode": "background",
         "graphMode": "area",
@@ -257,7 +260,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT mean(\"value\") FROM \"WalkingStepLength\" WHERE (\"device\" =~ /^$source$/) AND time >= now() - 1d GROUP BY \"unit\"",
+          "query": "SELECT mean(\"value\") FROM \"WalkingStepLength\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
@@ -307,6 +310,7 @@
         "y": 1
       },
       "id": 5,
+      "timeFrom": "now/d",
       "options": {
         "colorMode": "background",
         "graphMode": "area",
@@ -334,7 +338,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT mean(\"value\") FROM \"WalkingAsymmetryPercentage\" WHERE (\"device\" =~ /^$source$/) AND time >= now() - 1d GROUP BY \"unit\"",
+          "query": "SELECT mean(\"value\") FROM \"WalkingAsymmetryPercentage\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
