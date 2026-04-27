@@ -84,7 +84,7 @@
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "sum"
           ],
           "fields": "",
           "values": false
@@ -104,7 +104,7 @@
             "type": "influxdb",
             "uid": "influx"
           },
-          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" = ~ /^$source$/) AND $timeFilter GROUP BY \"unit\"",
+          "query": "SELECT sum(\"value\") FROM \"StepCount\" WHERE (\"device\" =~ /^$source$/) AND $timeFilter GROUP BY time($__interval), \"unit\" fill(0)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series"
