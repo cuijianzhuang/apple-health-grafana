@@ -11,10 +11,14 @@ services:
       - INFLUXDB_DB=health
     volumes:
     - influx-data:/var/lib/influxdb
+  # 挂载整个 tests 目录，避免 Windows 上「文件不存在时被建成空目录」导致
+  # 目录绑定到容器内 /export.zip 文件路径而报错。
   ingester:
     build: ./ingester
+    environment:
+      - ZIP_PATH=/import/test-export.zip
     volumes:
-    - ./tests/test-export.zip:/export.zip
+      - ./tests:/import:ro
 
   api:
     build: ./ingester
