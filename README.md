@@ -75,10 +75,10 @@ Then simply run :
 
 ```sh
 # start grafana and influx in the background
-docker-compose up -d grafana influx
+docker compose up -d grafana influx
 
 # start our ingester
-docker-compose up ingester
+docker compose up ingester
 ```
 
 
@@ -98,9 +98,11 @@ apple-health-grafana-ingester-1 exited with code 0
 
 Wait for a log saying that all the data have been imported.
 
-_Note: Depending on the amount of data the export has, it can take a few minutes to work through. As an example, loading nearly 3 years of data (2 millions+ data points, 200+ workout routes) on a 10th gen i5 took 2 minutes and around 11 minutes on a Raspberry Pi 4._
+_Note: Depending on the amount of data the export has, it can take a few minutes to work through. As an example, loading nearly 4 years of data (3 millions+ data points, 200+ workout routes) on a 10th gen i5 took around 5 minutes._
 
 __/!\ It's not uncommon for the export to be borked (see issues [#4](https://github.com/k0rventen/apple-health-grafana/issues/4),[#14](https://github.com/k0rventen/apple-health-grafana/issues/14),[#29](https://github.com/k0rventen/apple-health-grafana/issues/29)). Some preventive measures are in place to fix it as best as possible, but if you encounter weird errors/behavior, please try again with a new export.__
+
+__/!\ If you have a very large export file (above 100Mo, likely 5+ years of data), you may encounter an error related to limits: `too many open files`, see issue [#35](https://github.com/k0rventen/apple-health-grafana/issues/35). To fix that, you can increase this limit by running the following command: `ulimit -n 1000000`, then relaunching the whole compose stack.__
 
 
 ## Visualization and next steps
@@ -111,9 +113,9 @@ Head to __http://localhost:3000__, and log in with the grafana creds from the co
 You should see some graphs with metrics in them.
 4 dashboards are created by default:
 - a generic one displaying every metric available, 
-- a more refined one for specific metrics that are probably there like walking distance, hearth related metrics..
+- a more refined one for specific metrics that are probably there like walking distance, heart related metrics..
 - a workout routes one, that shows a GPS map of your outdoor routes (walking/running/biking).
-- a sleep tracking dashboard, that displays how much time/percentage is spent in each sleep category.
+- a sleep tracking dashboard, that displays how much time/percentage is spent in each sleep stage.
 
 ## Tips on further analyzing the data
 
