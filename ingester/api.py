@@ -18,7 +18,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify, redirect, request, send_from_directory, url_for
 from influxdb import InfluxDBClient
 
 # ---------------------------------------------------------------------------
@@ -28,6 +28,8 @@ INFLUX_HOST = os.getenv("INFLUX_HOST", "influx")
 INFLUX_PORT = int(os.getenv("INFLUX_PORT", "8086"))
 INFLUX_DB = os.getenv("INFLUX_DB", "health")
 API_KEY = os.getenv("API_KEY", "")
+
+HEARTBEAT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "heartbeat")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB 请求体上限
@@ -113,6 +115,29 @@ def _get_influx() -> InfluxDBClient:
     except Exception:
         _influx_client = InfluxDBClient(INFLUX_HOST, INFLUX_PORT, database=INFLUX_DB)
     return _influx_client
+
+
+def _bpm_from_metric_fields(fields: dict[str, Any]) -> float | None:
+    """Pick a sensible BPM number from HeartRate Influx fields (value / Min / Max / …)."""
+    if not fields:
+        return None
+    for key in ("value", "Avg", "Min", "Max", "avg", "min", "max"):
+        raw = fields.get(key)
+        if raw is None:
+            continue
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _time_to_iso(ts: Any) -> str | None:
+    if ts is None:
+        return None
+    if hasattr(ts, "isoformat"):
+        return ts.isoformat()  # type: ignore[no-any-return]
+    return str(ts)
 
 
 def _parse_date(date_str: Any) -> int | None:
@@ -420,7 +445,7 @@ def _convert_workout(w: dict[str, Any]) -> list[dict]:
 
 @app.before_request
 def _check_api_key():
-    if API_KEY and request.endpoint not in ("health",):
+    if API_KEY and request.endpoint not in ("health", "heartbeat_index", "heartbeat_redirect"):
         key = request.headers.get("X-API-Key", "")
         if key != API_KEY:
             return jsonify({"error": "无效的 API Key"}), 401
@@ -430,6 +455,48 @@ def _check_api_key():
 def health():
     """简单健康检查，也可用于 Health Auto Export 连通性测试。"""
     return jsonify({"status": "ok"})
+
+
+@app.route("/heartbeat")
+def heartbeat_redirect():
+    return redirect(url_for("heartbeat_index"), code=302)
+
+
+@app.route("/heartbeat/")
+def heartbeat_index():
+    """静态页面：心率展示（参考 iBeats 风格）。"""
+    return send_from_directory(HEARTBEAT_DIR, "index.html")
+
+
+@app.route("/api/heartbeat/recent", methods=["GET"])
+def heartbeat_recent():
+    """从 InfluxDB 读取最近 HeartRate 点，供 /heartbeat/ 页面使用。"""
+    try:
+        limit = int(request.args.get("limit", "80"))
+    except ValueError:
+        limit = 80
+    limit = max(1, min(limit, 500))
+
+    try:
+        client = _get_influx()
+        q = f'SELECT * FROM "HeartRate" ORDER BY time DESC LIMIT {limit}'
+        rs = client.query(q)
+    except Exception as err:
+        log.exception("查询 HeartRate 失败。")
+        return jsonify({"error": "查询失败", "detail": str(err)}), 502
+
+    readings: list[dict[str, Any]] = []
+    for row in rs.get_points("HeartRate"):
+        bpm = _bpm_from_metric_fields({k: v for k, v in row.items() if k != "time"})
+        if bpm is None:
+            continue
+        tiso = _time_to_iso(row.get("time"))
+        if tiso is None:
+            continue
+        readings.append({"time": tiso, "bpm": bpm})
+
+    latest = readings[0] if readings else None
+    return jsonify({"readings": readings, "latest": latest})
 
 
 @app.route("/api/healthautoexport", methods=["POST"])

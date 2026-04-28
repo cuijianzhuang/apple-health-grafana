@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Your Soul, Your Beats — 心率</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@300;400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #080b10;
+      --surface: rgba(255,255,255,0.03);
+      --panel: rgba(14,18,26,0.9);
+      --border: rgba(255,255,255,0.07);
+      --text: #f0f2f5;
+      --muted: #4a5568;
+      --muted2: #718096;
+      --red: #ff3d5a;
+      --red-glow: rgba(255,61,90,0.35);
+      --red-dim: rgba(255,61,90,0.12);
+      --pink: #ff8fa3;
+      --blue: #378ADD;
+      --pulse-ms: 800ms;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      font-family: "Syne", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+      pointer-events: none; z-index: 0; opacity: 0.6;
+    }
+    .ambient { position: fixed; pointer-events: none; z-index: 0; border-radius: 50%; }
+    .ambient-1 { width:600px;height:600px;top:-180px;left:-120px;background:radial-gradient(circle,rgba(255,61,90,0.07) 0%,transparent 70%); }
+    .ambient-2 { width:450px;height:450px;bottom:-80px;right:-80px;background:radial-gradient(circle,rgba(80,30,180,0.05) 0%,transparent 70%); }
+    .wrap { position:relative;z-index:1;max-width:920px;margin:0 auto;padding:2.5rem 1.5rem 4rem; }
+
+    /* Header */
+    header { display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2rem;gap:1rem;flex-wrap:wrap; }
+    .brand-tag { font-size:.65rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--red);margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem; }
+    .brand-tag::before { content:"";width:16px;height:2px;background:var(--red);display:inline-block; }
+    header h1 { font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;letter-spacing:-.04em;line-height:1; }
+    header h1 span { color:var(--red); }
+    .header-sub { margin-top:.5rem;font-size:.75rem;color:var(--muted2);font-family:"JetBrains Mono",monospace;font-weight:300; }
+    .header-sub a { color:var(--red);text-decoration:none; }
+    .header-sub a:hover { text-decoration:underline; }
+
+    /* Toolbar */
+    .toolbar { display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;justify-content:flex-end; }
+    button { font-family:"Syne",sans-serif;font-size:.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.52rem 1.15rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--muted2);cursor:pointer;transition:all .18s; }
+    button:hover { color:var(--text);border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.05); }
+    button.primary { background:var(--red);border-color:var(--red);color:#fff; }
+    button.primary:hover { background:#ff5570; }
+    input[type="password"] { font-family:"JetBrains Mono",monospace;font-size:.78rem;padding:.5rem .85rem;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);width:min(240px,100%); }
+    input[type="password"]:focus { outline:none;border-color:rgba(255,61,90,.4); }
+    .hint { font-size:.73rem;color:var(--muted2);text-align:right;margin-bottom:.4rem;font-family:"JetBrains Mono",monospace; }
+    #key-row { margin-bottom:1rem;justify-content:flex-end; }
+
+    /* ── Unified hero panel ── */
+    .hero-panel {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+      height: 260px;
+      background:
+              radial-gradient(ellipse 55% 120% at 18% 50%, rgba(255,61,90,0.13) 0%, transparent 60%),
+              rgba(14,18,26,0.92);
+    }
+    /* top accent line */
+    .hero-panel::before {
+      content:""; position:absolute; top:0; left:0; right:0; height:1px;
+      background:linear-gradient(90deg,transparent,rgba(255,61,90,.55) 35%,rgba(255,143,163,.4) 55%,transparent);
+    }
+
+    /* ECG canvas fills entire panel as background layer */
+    #ecg-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* heart + data overlay, left side */
+    .hero-left {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 300px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      z-index: 2;
+      /* fade the ECG out behind the heart area */
+      background: linear-gradient(90deg, rgba(14,18,26,0.88) 55%, transparent 100%);
+    }
+
+    /* heart svg */
+    #heart-svg-el {
+      width: 120px;
+      height: 110px;
+      filter: drop-shadow(0 0 20px rgba(255,61,90,.45));
+      transition: filter .08s;
+      flex-shrink: 0;
+    }
+
+    /* data block overlaid on heart */
+    .bpm-block {
+      margin-top: -8px;
+      text-align: center;
+    }
+    .bpm-big {
+      font-family: "JetBrains Mono", monospace;
+      font-size: clamp(3.2rem, 7vw, 4.5rem);
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -.04em;
+      color: var(--text);
+    }
+    .bpm-meta { display:flex;align-items:center;justify-content:center;gap:.5rem;margin-top:.4rem; }
+    .bpm-pill { font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--red);background:var(--red-dim);border:1px solid rgba(255,61,90,.22);padding:.2rem .5rem;border-radius:4px; }
+    .pulse-dot { width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;animation:pulseDot var(--pulse-ms,800ms) ease-out infinite; }
+    @keyframes pulseDot { 0%{box-shadow:0 0 0 0 var(--red-glow);opacity:1} 60%{box-shadow:0 0 0 7px rgba(255,61,90,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(255,61,90,0);opacity:1} }
+    .latest-time { margin-top:.45rem;font-family:"JetBrains Mono",monospace;font-size:.68rem;font-weight:300;color:var(--muted); }
+
+    /* ECG label top-right */
+    .ecg-label {
+      position: absolute;
+      top: 1rem; right: 1.25rem;
+      font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+      z-index: 2;
+    }
+
+    /* Stats */
+    .stats-row { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:1rem;background:var(--border); }
+    .stat-cell { padding:1rem 1.25rem;background:var(--bg);transition:background .2s; }
+    .stat-cell:hover { background:rgba(255,255,255,.02); }
+    .stat-label { font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:.35rem; }
+    .stat-value { font-family:"JetBrains Mono",monospace;font-size:1.6rem;font-weight:600;color:var(--text);letter-spacing:-.03em;transition:color .4s; }
+    .stat-value.red { color:var(--red); }
+    .stat-value.blue { color:var(--blue); }
+    .stat-unit { font-size:.58rem;color:var(--muted);font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-left:.2rem; }
+
+    /* Table */
+    .section-label { font-size:.62rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem; }
+    .section-label::after { content:"";flex:1;height:1px;background:var(--border); }
+    .table-card { border:1px solid var(--border);border-radius:14px;overflow:hidden; }
+    table { width:100%;border-collapse:collapse; }
+    thead tr { border-bottom:1px solid var(--border); }
+    th { padding:.7rem 1.25rem;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:rgba(255,255,255,.02); }
+    td { padding:.7rem 1.25rem;font-family:"JetBrains Mono",monospace;font-size:.8rem;font-weight:300;color:var(--muted2);border-bottom:1px solid rgba(255,255,255,.03);transition:background .15s; }
+    tr:last-child td { border-bottom:none; }
+    tr:hover td { background:rgba(255,255,255,.02); }
+    td:last-child { text-align:right; }
+    .bpm-row-val { display:inline-flex;align-items:center;gap:.4rem;font-weight:600;color:var(--text); }
+    .bpm-row-dot { width:5px;height:5px;border-radius:50%;background:var(--red);flex-shrink:0; }
+    .bpm-high .bpm-row-dot { background:#ff6b35; }
+    .bpm-low  .bpm-row-dot { background:#4ecdc4; }
+    @keyframes rowIn { from{opacity:0;background:rgba(255,61,90,.07)} to{opacity:1;background:transparent} }
+    .row-new td { animation:rowIn .6s ease forwards; }
+
+    .err { color:#fc8181;text-align:center;padding:1rem 1.25rem;font-size:.8rem;font-family:"JetBrains Mono",monospace;font-weight:300; }
+    .footnote { margin-top:2.5rem;text-align:center;font-size:.7rem;color:var(--muted);font-family:"JetBrains Mono",monospace;font-weight:300;line-height:1.8; }
+    .footnote code { color:var(--red); }
+
+    @media(max-width:700px) {
+      .hero-panel { height: 210px; }
+      .hero-left { width: 190px; }
+      #heart-svg-el { width: 85px; height: 78px; }
+      .stats-row { grid-template-columns:1fr 1fr; }
+      .stat-cell:last-child { grid-column:1/-1; }
+      header { flex-direction:column; }
+      .toolbar { justify-content:flex-start; }
+    }
+  </style>
+</head>
+<body>
+<div class="ambient ambient-1"></div>
+<div class="ambient ambient-2"></div>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand-tag">Heart Monitor</div>
+      <h1>Your Soul,<br><span>Your Beats</span></h1>
+      <p class="header-sub">via <a href="https://github.com/yihong0618/iBeats" target="_blank" rel="noopener">iBeats</a> — Apple Watch / Health Auto Export</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:.5rem;align-items:flex-end;">
+      <div class="toolbar">
+        <button type="button" id="btn-refresh" class="primary">从服务器读取</button>
+        <button type="button" id="btn-demo">演示数据</button>
+      </div>
+      <p class="hint" id="key-hint" hidden>请填写 X-API-Key 后重新加载。</p>
+      <div class="toolbar" id="key-row" hidden>
+        <input type="password" id="api-key" autocomplete="off" placeholder="X-API-Key" />
+        <button type="button" id="btn-save-key">记住</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Unified hero: ECG fills background, heart+data overlay left side -->
+  <div class="hero-panel">
+    <canvas id="ecg-canvas"></canvas>
+    <div class="ecg-label">实时心电图</div>
+
+    <div class="hero-left">
+      <!-- Refined heart SVG using cubic bezier curves -->
+      <svg id="heart-svg-el" viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="hg" cx="35%" cy="28%" r="72%">
+            <stop offset="0%"   stop-color="#ffb3c1"/>
+            <stop offset="40%"  stop-color="#ff3d5a"/>
+            <stop offset="100%" stop-color="#9b0d26"/>
+          </radialGradient>
+          <radialGradient id="hglow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stop-color="rgba(255,61,90,0.28)"/>
+            <stop offset="100%" stop-color="rgba(255,61,90,0)"/>
+          </radialGradient>
+        </defs>
+        <!-- ambient glow blob -->
+        <ellipse id="halo" cx="50" cy="48" rx="44" ry="40" fill="url(#hglow)" opacity="0.45"/>
+        <!-- proper heart using cubic beziers -->
+        <path id="heart-path"
+              d="M50,76
+               C50,76 10,52 10,28
+               C10,16 19,8 30,8
+               C38,8 45,13 50,20
+               C55,13 62,8 70,8
+               C81,8 90,16 90,28
+               C90,52 50,76 50,76 Z"
+              fill="url(#hg)"
+              stroke="rgba(255,140,160,0.35)" stroke-width="1"/>
+        <!-- specular highlight -->
+        <path d="M29,24 C34,15 45,13 50,21" fill="none"
+              stroke="rgba(255,235,240,0.5)" stroke-width="2.2" stroke-linecap="round"/>
+        <!-- inner soft shadow at bottom -->
+        <path d="M50,72 C35,60 18,48 14,34" fill="none"
+              stroke="rgba(100,0,20,0.25)" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+
+      <div class="bpm-block">
+        <div class="bpm-big" id="big-bpm">—</div>
+        <div class="bpm-meta">
+          <span class="pulse-dot"></span>
+          <span class="bpm-pill">BPM</span>
+        </div>
+        <div class="latest-time" id="latest-time">尚未加载</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-cell">
+      <div class="stat-label">最低心率</div>
+      <div class="stat-value blue" id="stat-min">—<span class="stat-unit">bpm</span></div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">平均心率</div>
+      <div class="stat-value" id="stat-avg">—<span class="stat-unit">bpm</span></div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-label">最高心率</div>
+      <div class="stat-value red" id="stat-max">—<span class="stat-unit">bpm</span></div>
+    </div>
+  </div>
+
+  <div class="section-label">历史记录</div>
+  <div class="table-card">
+    <table>
+      <thead><tr><th>时间</th><th style="text-align:right;">心率 (BPM)</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="err" id="err" hidden></div>
+  </div>
+
+  <p class="footnote">访问 <code>/heartbeat/</code> 与 <code>/api/heartbeat/recent</code> 读取 InfluxDB 中的 HeartRate 测量数据</p>
+</div>
+
+<script>
+  (function () {
+    /* ── storage ── */
+    const STORAGE_KEY = "health_api_key";
+    function getSavedKey() { try { return localStorage.getItem(STORAGE_KEY) || ""; } catch { return ""; } }
+    function setSavedKey(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch {} }
+
+    /* ── state ── */
+    let displayedBpm = null;
+    let currentBpm = 72;
+    let targetBpm = 72;
+    let liveMode = false;
+    let allBpms = [];
+    let demoInterval = null;
+
+    /* ── canvas ── */
+    const canvas = document.getElementById('ecg-canvas');
+    const ctx = canvas.getContext('2d');
+    let ecgBuffer = [];
+    let ecgPhase = 0;
+    let lastBeat = 0;
+    let heartScale = 1;
+    let heartPhase = 0; // 0=idle 1=expand 2=contract
+    let bpmDriftTimer = 0;
+    let lastFrameTs = 0;
+    let liveBpmDisplay = -1;
+
+    function initCanvas() {
+      const panel = canvas.parentElement;
+      const w = Math.max(panel.offsetWidth, 100);
+      const h = Math.max(panel.offsetHeight, 100);
+      canvas.width = w; canvas.height = h;
+      while (ecgBuffer.length < w) ecgBuffer.unshift(0.5);
+      while (ecgBuffer.length > w) ecgBuffer.shift();
+    }
+
+    /* PQRST waveform */
+    function ecgWaveY(p) {
+      p = p % 1;
+      if (p < 0.05) return 0.5;
+      if (p < 0.10) return 0.5 + (p - 0.05) * 3;
+      if (p < 0.15) return 0.65 - (p - 0.10) * 3;
+      if (p < 0.18) return 0.5 - (p - 0.15) * 6;
+      if (p < 0.22) return 0.32 + (p - 0.18) * 52;
+      if (p < 0.26) return 2.4 - (p - 0.22) * 52;
+      if (p < 0.30) return 0.32 + (p - 0.26) * 5;
+      if (p < 0.40) return 0.52 - (p - 0.30) * 1.5;
+      if (p < 0.50) return 0.37 + (p - 0.40) * 3.5;
+      if (p < 0.60) return 0.72 - (p - 0.50) * 3.5;
+      return 0.5;
+    }
+
+    function drawEcg() {
+      const w = canvas.width, h = canvas.height;
+      if (!w || !h) return;
+      ctx.clearRect(0, 0, w, h);
+
+      /* ECG starts at ~28% of width, fades in from 20%-32% */
+      const startX = Math.round(w * 0.20);
+      const fadeEnd = Math.round(w * 0.33);
+      const bufLen  = ecgBuffer.length;
+
+      /* helper: map buffer index to canvas x within [startX, w] */
+      const toX = i => startX + (i / (bufLen - 1)) * (w - startX);
+      const toY = v => h * (1 - Math.max(0, Math.min(1, v * 0.52 + 0.22)));
+
+      /* area fill with left-edge fade */
+      const areaGrad = ctx.createLinearGradient(startX, 0, w, 0);
+      areaGrad.addColorStop(0,    'rgba(255,61,90,0)');
+      areaGrad.addColorStop(0.12, 'rgba(255,61,90,0.08)');
+      areaGrad.addColorStop(1,    'rgba(255,61,90,0.14)');
+      const vertGrad = ctx.createLinearGradient(0, 0, 0, h);
+      vertGrad.addColorStop(0, 'rgba(255,61,90,0.18)');
+      vertGrad.addColorStop(1, 'rgba(255,61,90,0)');
+
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i < bufLen; i++) {
+        const x = toX(i), y = toY(ecgBuffer[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.lineTo(w, h); ctx.lineTo(startX, h); ctx.closePath();
+      ctx.fillStyle = vertGrad;
+      /* mask left edge with clip */
+      ctx.save();
+      ctx.rect(fadeEnd, 0, w - fadeEnd, h);
+      ctx.clip();
+      ctx.fill();
+      ctx.restore();
+      ctx.restore();
+
+      /* subtle horizontal grid lines */
+      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
+      ctx.lineWidth = 0.5;
+      [0.25, 0.5, 0.75].forEach(f => {
+        ctx.beginPath(); ctx.moveTo(fadeEnd, h * f); ctx.lineTo(w, h * f); ctx.stroke();
+      });
+
+      /* main ECG line with opacity fade on left edge */
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i < bufLen; i++) {
+        const x = toX(i), y = toY(ecgBuffer[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      /* fade mask: transparent on far left, fully opaque by fadeEnd */
+      const lineGrad = ctx.createLinearGradient(startX, 0, fadeEnd + 30, 0);
+      lineGrad.addColorStop(0,   'rgba(255,61,90,0)');
+      lineGrad.addColorStop(1,   'rgba(255,61,90,1)');
+      ctx.strokeStyle = lineGrad;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+
+      /* bright tracer dot at the head (right edge) */
+      const lastV = ecgBuffer[bufLen - 1];
+      const ty = toY(lastV);
+      ctx.beginPath();
+      ctx.arc(w - 2, ty, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+    }
+
+    /* heart beat animation */
+    function updateHeart(now) {
+      if (!liveMode) return;
+      const beatMs = Math.round(60000 / currentBpm);
+      if (now - lastBeat >= beatMs) { lastBeat = now; heartPhase = 1; }
+      if (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
+      else if (heartPhase === 2) { heartScale = Math.max(1.0, heartScale - 0.007); if (heartScale <= 1.0) heartPhase = 0; }
+
+      const cx = 50, cy = 48;
+      const t = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
+      document.getElementById('heart-path').setAttribute('transform', t);
+      document.getElementById('halo').setAttribute('transform', t);
+      document.getElementById('halo').setAttribute('opacity', (0.3 + (heartScale - 1) * 3.5).toFixed(3));
+      const glow = Math.round((heartScale - 1) * 160);
+      document.getElementById('heart-svg-el').style.filter = `drop-shadow(0 0 ${glow}px rgba(255,61,90,0.65))`;
+    }
+
+    function updateEcgLive(now) {
+      if (!liveMode) return;
+      const beatMs = Math.round(60000 / currentBpm);
+      ecgPhase = (now % beatMs) / beatMs;
+      const raw = ecgWaveY(ecgPhase);
+      ecgBuffer.push(Math.max(0, Math.min(1.8, raw)));
+      if (ecgBuffer.length > canvas.width) ecgBuffer.shift();
+    }
+
+    function setPulseInterval(bpm) {
+      document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
+    }
+
+    /* smooth BPM counter for static render */
+    function animateBpm(target) {
+      const node = document.getElementById('big-bpm');
+      if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
+      const goal = Math.round(target), start = displayedBpm == null ? goal : displayedBpm;
+      const dur = 700, t0 = performance.now();
+      function step(ts) {
+        const p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+        node.textContent = String(Math.round(start + (goal - start) * e));
+        if (p < 1) requestAnimationFrame(step); else displayedBpm = goal;
+      }
+      requestAnimationFrame(step);
+    }
+
+    /* fill ecg from static readings */
+    function buildStaticEcg(values) {
+      if (!values.length) return;
+      const w = canvas.width;
+      ecgBuffer = [];
+      const vmin = Math.min(...values), vmax = Math.max(...values), span = Math.max(vmax - vmin, 1);
+      for (let i = 0; i < w; i++) {
+        const idx = Math.floor((i / w) * values.length);
+        ecgBuffer.push(0.15 + ((values[idx] - vmin) / span) * 0.7);
+      }
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    }
+
+    function bpmCat(bpm) {
+      if (bpm >= 100) return 'bpm-high';
+      if (bpm <= 60)  return 'bpm-low';
+      return '';
+    }
+
+    function updateStats() {
+      if (!allBpms.length) return;
+      const mn = Math.min(...allBpms), mx = Math.max(...allBpms);
+      const av = Math.round(allBpms.reduce((a, b) => a + b, 0) / allBpms.length);
+      document.getElementById('stat-min').innerHTML = `${mn}<span class="stat-unit">bpm</span>`;
+      document.getElementById('stat-avg').innerHTML = `${av}<span class="stat-unit">bpm</span>`;
+      document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
+    }
+
+    function render(readings, latest) {
+      document.getElementById('err').hidden = true;
+      clearInterval(demoInterval);
+      liveMode = false;
+
+      if (!readings.length) {
+        animateBpm(null);
+        document.getElementById('latest-time').textContent = '暂无心率记录';
+        return;
+      }
+
+      const ordered = [...readings].sort((a, b) => new Date(b.time) - new Date(a.time));
+      const bpm = latest?.bpm ?? ordered[0]?.bpm;
+      currentBpm = Number(bpm) || 72; targetBpm = currentBpm;
+      animateBpm(bpm);
+      setPulseInterval(currentBpm);
+      document.getElementById('latest-time').textContent = fmtTime(latest?.time || ordered[0]?.time);
+
+      allBpms = readings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
+      updateStats();
+
+      buildStaticEcg(ordered.slice(0, 40).reverse().map(r => r.bpm));
+
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
+      for (const r of ordered.slice(0, 50)) {
+        const bVal = r.bpm != null ? Math.round(r.bpm) : null;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
+        tbody.appendChild(tr);
+      }
+
+      liveMode = true;
+    }
+
+    function startDemoLive() {
+      clearInterval(demoInterval);
+      demoInterval = setInterval(() => {
+        targetBpm = Math.max(52, Math.min(118, targetBpm + (Math.random() - 0.48) * 10));
+        const bVal = Math.round(currentBpm);
+        allBpms.push(bVal);
+        if (allBpms.length > 80) allBpms.shift();
+        updateStats();
+
+        const tbody = document.getElementById('rows');
+        const cat = bpmCat(bVal);
+        const tr = document.createElement('tr');
+        tr.className = 'row-new';
+        const now = new Date().toISOString();
+        tr.innerHTML = `<td>${fmtTime(now)}</td><td><span class="bpm-row-val ${cat}"><span class="bpm-row-dot"></span>${bVal}</span></td>`;
+        tbody.insertBefore(tr, tbody.firstChild);
+        if (tbody.rows.length > 50) tbody.deleteRow(tbody.rows.length - 1);
+        document.getElementById('latest-time').textContent = fmtTime(now);
+      }, 2800);
+    }
+
+    function showError(msg) { const el = document.getElementById('err'); el.textContent = msg; el.hidden = !msg; }
+
+    async function fetchRecent() {
+      clearInterval(demoInterval); liveMode = false;
+      const key = document.getElementById('api-key').value || getSavedKey();
+      const headers = {}; if (key) headers['X-API-Key'] = key;
+      const res = await fetch('/api/heartbeat/recent?limit=80', { headers });
+      if (res.status === 401) {
+        document.getElementById('key-row').hidden = false;
+        document.getElementById('key-hint').hidden = false;
+        showError('需要有效的 X-API-Key。'); return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
+      render(data.readings || [], data.latest);
+    }
+
+    function loadDemo() {
+      clearInterval(demoInterval); liveMode = false;
+      const now = Date.now();
+      const readings = [];
+      let b = 72;
+      for (let i = 29; i >= 0; i--) {
+        b = Math.max(52, Math.min(118, b + (Math.random() - 0.48) * 9));
+        readings.push({ time: new Date(now - i * 100000).toISOString(), bpm: Math.round(b) });
+      }
+      render(readings, readings[readings.length - 1]);
+      showError('');
+      startDemoLive();
+    }
+
+    /* main rAF loop */
+    function loop(now) {
+      requestAnimationFrame(loop);
+      const dt = now - lastFrameTs; lastFrameTs = now;
+      if (liveMode) {
+        currentBpm += (targetBpm - currentBpm) * 0.025;
+        bpmDriftTimer += dt;
+        if (bpmDriftTimer > 3200) {
+          bpmDriftTimer = 0;
+          targetBpm = Math.max(52, Math.min(118, targetBpm + (Math.random() - 0.48) * 12));
+        }
+        const v = Math.round(currentBpm);
+        if (v !== liveBpmDisplay) { liveBpmDisplay = v; document.getElementById('big-bpm').textContent = v; setPulseInterval(v); }
+        updateHeart(now);
+        updateEcgLive(now);
+      }
+      drawEcg();
+    }
+
+    /* boot */
+    document.getElementById('btn-refresh').addEventListener('click', fetchRecent);
+    document.getElementById('btn-demo').addEventListener('click', loadDemo);
+    document.getElementById('btn-save-key').addEventListener('click', () => setSavedKey(document.getElementById('api-key').value.trim()));
+    document.getElementById('api-key').value = getSavedKey();
+    window.addEventListener('resize', initCanvas);
+
+    initCanvas();
+    requestAnimationFrame(loop);
+    fetchRecent().catch(() => { loadDemo(); showError('无法连接 API，已显示演示数据。'); });
+  })();
+</script>
+</body>
+</html>
