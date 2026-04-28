@@ -4,7 +4,7 @@ services:
     ports:
     - 3000:3000
   influx:
-    image: influxdb:1.8
+    image: influxdb:1.12
     environment:
       - INFLUXDB_DB=health
     volumes:
@@ -12,7 +12,7 @@ services:
   ingester:
     image: k0rventen/apple-health-grafana-ingester:v0.6.0
     volumes:
-    - <local_path_to_export.zip>:/export.zip
+    - ./export.zip:/export.zip
 
 volumes:
   influx-data:
