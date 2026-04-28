@@ -30,6 +30,7 @@ INFLUX_DB = os.getenv("INFLUX_DB", "health")
 API_KEY = os.getenv("API_KEY", "")
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB 请求体上限
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s")
 log = logging.getLogger("health-api")
 
@@ -76,10 +77,28 @@ METRIC_NAME_MAP: dict[str, str] = {
     "dietary_caffeine": "DietaryCaffeine",
     "mindful_minutes": "MindfulSession",
     "handwashing": "HandwashingEvent",
-    "toothbrushing": "AppleSleepingWristTemperature",
+    "toothbrushing": "ToothbrushingEvent",
     "noise_exposure": "EnvironmentalAudioExposure",
     "headphone_audio_exposure": "HeadphoneAudioExposure",
     "uv_exposure": "UVExposure",
+}
+
+SLEEP_DURATION_STATES: dict[str, str] = {
+    "inBed": "HKCategoryValueSleepAnalysisInBed",
+    "asleep": "HKCategoryValueSleepAnalysisAsleepUnspecified",
+    "core": "HKCategoryValueSleepAnalysisAsleepCore",
+    "deep": "HKCategoryValueSleepAnalysisAsleepDeep",
+    "rem": "HKCategoryValueSleepAnalysisAsleepREM",
+    "awake": "HKCategoryValueSleepAnalysisAwake",
+}
+
+SLEEP_STATE_VALUES: dict[str, int] = {
+    "HKCategoryValueSleepAnalysisAsleepDeep": 0,
+    "HKCategoryValueSleepAnalysisAsleepCore": 1,
+    "HKCategoryValueSleepAnalysisAsleepREM": 2,
+    "HKCategoryValueSleepAnalysisInBed": 3,
+    "HKCategoryValueSleepAnalysisAsleepUnspecified": 3,
+    "HKCategoryValueSleepAnalysisAwake": 4,
 }
 
 # ---------------------------------------------------------------------------
@@ -96,14 +115,16 @@ def _get_influx() -> InfluxDBClient:
     return _influx_client
 
 
-def _parse_date(date_str: str) -> int:
+def _parse_date(date_str: Any) -> int | None:
     """Parse Health Auto Export date string → unix epoch seconds.
     Accepted formats:
       '2024-02-06 14:30:00 -0800'
       '2024-02-06'
       ISO-8601 variants
     """
-    date_str = date_str.strip()
+    if not date_str:
+        return None
+    date_str = str(date_str).strip()
     for fmt in (
         "%Y-%m-%d %H:%M:%S %z",
         "%Y-%m-%d %H:%M:%S",
@@ -116,7 +137,28 @@ def _parse_date(date_str: str) -> int:
     try:
         return int(datetime.fromisoformat(date_str).timestamp())
     except Exception:
-        return int(time.time())
+        log.warning("无法解析日期，已跳过该数据点: %r", date_str)
+        return None
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _duration_to_seconds(value: Any, units: str) -> float | None:
+    duration = _to_float(value)
+    if duration is None:
+        return None
+
+    normalized_units = units.lower()
+    if normalized_units in ("h", "hr", "hrs", "hour", "hours"):
+        return duration * 3600
+    if normalized_units in ("m", "min", "mins", "minute", "minutes"):
+        return duration * 60
+    return duration
 
 
 def _snake_to_measurement(name: str) -> str:
@@ -124,6 +166,81 @@ def _snake_to_measurement(name: str) -> str:
     if name in METRIC_NAME_MAP:
         return METRIC_NAME_MAP[name]
     return "".join(w.capitalize() for w in name.split("_"))
+
+
+def _sleep_state_from_datapoint(dp: dict[str, Any]) -> str | None:
+    raw_state = (
+        dp.get("state")
+        or dp.get("stage")
+        or dp.get("sleepStage")
+        or dp.get("value")
+        or dp.get("type")
+    )
+    if raw_state is None:
+        return None
+
+    state = str(raw_state)
+    if state.startswith("HKCategoryValueSleepAnalysis"):
+        return state
+
+    normalized = state.replace(" ", "").replace("_", "").replace("-", "").lower()
+    lookup = {
+        "inbed": "HKCategoryValueSleepAnalysisInBed",
+        "asleep": "HKCategoryValueSleepAnalysisAsleepUnspecified",
+        "asleepunspecified": "HKCategoryValueSleepAnalysisAsleepUnspecified",
+        "core": "HKCategoryValueSleepAnalysisAsleepCore",
+        "asleepcore": "HKCategoryValueSleepAnalysisAsleepCore",
+        "deep": "HKCategoryValueSleepAnalysisAsleepDeep",
+        "asleepdeep": "HKCategoryValueSleepAnalysisAsleepDeep",
+        "rem": "HKCategoryValueSleepAnalysisAsleepREM",
+        "asleeprem": "HKCategoryValueSleepAnalysisAsleepREM",
+        "awake": "HKCategoryValueSleepAnalysisAwake",
+    }
+    return lookup.get(normalized)
+
+
+def _parse_sleep_interval(dp: dict[str, Any]) -> tuple[int, int] | None:
+    start = (
+        dp.get("start")
+        or dp.get("startDate")
+        or dp.get("from")
+        or dp.get("sleepStart")
+    )
+    end = (
+        dp.get("end")
+        or dp.get("endDate")
+        or dp.get("to")
+        or dp.get("sleepEnd")
+    )
+    start_ts = _parse_date(start)
+    end_ts = _parse_date(end)
+    if start_ts is None or end_ts is None or end_ts <= start_ts:
+        return None
+    return start_ts, end_ts
+
+
+def _append_sleep_stage_points(
+    points: list[dict],
+    *,
+    source: str,
+    start_ts: int,
+    end_ts: int,
+    state: str,
+) -> None:
+    state_value = SLEEP_STATE_VALUES.get(state)
+    if state_value is None:
+        return
+
+    for measurement in ("SleepAnalysisTimes", f"SleepAnalysisTimes-{source}"):
+        ts = start_ts
+        while ts < end_ts:
+            points.append({
+                "measurement": measurement,
+                "time": ts,
+                "fields": {"value": state_value},
+                "tags": {"device": source} if measurement == "SleepAnalysisTimes" else {},
+            })
+            ts += 60
 
 
 # ---------------------------------------------------------------------------
@@ -139,29 +256,64 @@ def _convert_metric(metric: dict[str, Any]) -> list[dict]:
 
     for dp in metric.get("data", []):
         ts = _parse_date(dp.get("date", ""))
+        if ts is None:
+            continue
         source = dp.get("source", "Health Auto Export")
 
         if name == "sleep_analysis":
-            fields = {}
-            for key in ("totalSleep", "asleep", "core", "deep", "rem", "inBed"):
-                if key in dp:
-                    fields[key] = float(dp[key])
-            if not fields:
-                continue
-            points.append({
-                "measurement": "SleepAnalysis",
-                "time": ts,
-                "fields": fields,
-                "tags": {"unit": units, "device": source},
-            })
+            wrote_sleep_point = False
+            duration_keys = [key for key in SLEEP_DURATION_STATES if key in dp]
+            if not duration_keys and "totalSleep" in dp:
+                duration_keys = ["totalSleep"]
+
+            for key in duration_keys:
+                state = SLEEP_DURATION_STATES.get(
+                    key, "HKCategoryValueSleepAnalysisAsleepUnspecified"
+                )
+                seconds = _duration_to_seconds(dp.get(key), units)
+                if seconds is None:
+                    continue
+                points.append({
+                    "measurement": "SleepAnalysis",
+                    "time": ts,
+                    "fields": {"value": seconds},
+                    "tags": {"unit": "seconds", "device": source, "state": state},
+                })
+                wrote_sleep_point = True
+
+            interval = _parse_sleep_interval(dp)
+            state = _sleep_state_from_datapoint(dp)
+            if interval and state:
+                start_ts, end_ts = interval
+                _append_sleep_stage_points(
+                    points,
+                    source=source,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                    state=state,
+                )
+                points.append({
+                    "measurement": "SleepAnalysis",
+                    "time": start_ts,
+                    "fields": {"value": end_ts - start_ts},
+                    "tags": {"unit": "seconds", "device": source, "state": state},
+                })
+                wrote_sleep_point = True
+
+            if not wrote_sleep_point:
+                log.warning("无法识别 sleep_analysis 数据点，已跳过: %s", dp)
             continue
 
         if name == "blood_pressure":
             fields = {}
             if "systolic" in dp:
-                fields["systolic"] = float(dp["systolic"])
+                systolic = _to_float(dp["systolic"])
+                if systolic is not None:
+                    fields["systolic"] = systolic
             if "diastolic" in dp:
-                fields["diastolic"] = float(dp["diastolic"])
+                diastolic = _to_float(dp["diastolic"])
+                if diastolic is not None:
+                    fields["diastolic"] = diastolic
             if not fields:
                 continue
             points.append({
@@ -176,7 +328,9 @@ def _convert_metric(metric: dict[str, Any]) -> list[dict]:
             fields: dict[str, float] = {}
             for key in ("Min", "Avg", "Max", "qty"):
                 if key in dp:
-                    fields[key if key != "qty" else "value"] = float(dp[key])
+                    value = _to_float(dp[key])
+                    if value is not None:
+                        fields[key if key != "qty" else "value"] = value
             if not fields:
                 continue
             points.append({
@@ -190,9 +344,8 @@ def _convert_metric(metric: dict[str, Any]) -> list[dict]:
         value = dp.get("qty")
         if value is None:
             continue
-        try:
-            value = float(value)
-        except (ValueError, TypeError):
+        value = _to_float(value)
+        if value is None:
             continue
 
         points.append({
@@ -213,7 +366,11 @@ def _convert_workout(w: dict[str, Any]) -> list[dict]:
     """Convert one Health Auto Export workout object to influx points."""
     workout_name = w.get("name", "Workout")
     ts = _parse_date(w.get("start", w.get("date", "")))
-    duration = w.get("duration", 0)
+    if ts is None:
+        return []
+    duration = _to_float(w.get("duration", 0))
+    if duration is None:
+        duration = 0
     source = w.get("source", "Health Auto Export")
 
     points: list[dict] = []
@@ -228,19 +385,25 @@ def _convert_workout(w: dict[str, Any]) -> list[dict]:
     if route:
         slug = workout_name.replace(" ", "-").lower()
         for rp in route:
-            lat = rp.get("lat")
-            lon = rp.get("lon")
+            lat = _to_float(rp.get("lat"))
+            lon = _to_float(rp.get("lon"))
             if lat is None or lon is None:
                 continue
             rts = _parse_date(rp.get("date", rp.get("timestamp", "")))
+            if rts is None:
+                continue
             fields: dict[str, float] = {
-                "latitude": float(lat),
-                "longitude": float(lon),
+                "latitude": lat,
+                "longitude": lon,
             }
             if "altitude" in rp:
-                fields["elevation"] = float(rp["altitude"])
+                altitude = _to_float(rp["altitude"])
+                if altitude is not None:
+                    fields["elevation"] = altitude
             if "speed" in rp:
-                fields["speed"] = float(rp["speed"])
+                speed = _to_float(rp["speed"])
+                if speed is not None:
+                    fields["speed"] = speed
             points.append({
                 "measurement": "workout-routes",
                 "tags": {"workout": slug},
@@ -275,48 +438,58 @@ def ingest():
     payload = request.get_json(silent=True)
     if payload is None:
         return jsonify({"error": "无法解析 JSON"}), 400
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON 根对象必须是 object"}), 400
 
     data = payload.get("data", payload)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON 格式不正确，缺少 data 对象"}), 400
 
     metrics_list = data.get("metrics", [])
     workouts_list = data.get("workouts", [])
+    if not isinstance(metrics_list, list) or not isinstance(workouts_list, list):
+        return jsonify({"error": "metrics 和 workouts 必须是数组"}), 400
 
-    points: list[dict] = []
+    health_points: list[dict] = []
     devices: set[str] = set()
     for m in metrics_list:
         converted = _convert_metric(m)
-        points.extend(converted)
+        health_points.extend(converted)
         for p in converted:
             dev = p.get("tags", {}).get("device")
             if dev:
                 devices.add(dev)
     for w in workouts_list:
         converted = _convert_workout(w)
-        points.extend(converted)
+        health_points.extend(converted)
         for p in converted:
             dev = p.get("tags", {}).get("device")
             if dev:
                 devices.add(dev)
 
-    # Keep compatibility with existing dashboards that query source devices
-    # from measurement "data-sources".
-    for dev in devices:
-        points.append({
-            "measurement": "data-sources",
-            "fields": {"value": 1},
-            "tags": {"device": dev},
-        })
-
-    if not points:
+    if not health_points:
         log.info("收到请求但未解析到有效数据点。")
         return jsonify({"status": "ok", "points": 0})
 
-    client = _get_influx()
-    client.write_points(points, time_precision="s")
-    log.info("写入 %d 个数据点（%d 个指标，%d 个运动）",
-             len(points), len(metrics_list), len(workouts_list))
+    # Keep compatibility with existing dashboards that query source devices
+    # from measurement "data-sources".
+    source_points = [
+        {"measurement": "data-sources", "fields": {"value": 1}, "tags": {"device": dev}}
+        for dev in devices
+    ]
 
-    return jsonify({"status": "ok", "points": len(points)})
+    all_points = health_points + source_points
+    try:
+        client = _get_influx()
+        client.write_points(all_points, time_precision="s")
+    except Exception as err:
+        log.exception("写入 InfluxDB 失败。")
+        return jsonify({"error": "写入 InfluxDB 失败", "detail": str(err)}), 502
+
+    log.info("写入 %d 个健康数据点（%d 个指标，%d 个运动）",
+             len(health_points), len(metrics_list), len(workouts_list))
+
+    return jsonify({"status": "ok", "points": len(health_points)})
 
 
 # ---------------------------------------------------------------------------

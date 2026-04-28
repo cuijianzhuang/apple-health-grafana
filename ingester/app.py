@@ -16,18 +16,16 @@ import gpxpy
 from gpxpy.gpx import GPXTrackPoint
 from influxdb import InfluxDBClient
 
-ZIP_PATH = "/export.zip"
+ZIP_PATH = os.getenv("ZIP_PATH", "/export.zip")
 ROUTES_PATH = "/export/apple_health_export/workout-routes/"
-EXPORT_PATH = "/export/apple_health_export"
-EXPORT_XML_REGEX = re.compile(r"(export|导出|dati esportati)\.xml",re.IGNORECASE)
+EXPORT_XML_REGEX = re.compile(r"(export|导出|dati esportati)\.xml", re.IGNORECASE)
 RESET_INFLUX = os.getenv("RESET_INFLUX", "false").lower() in ("1", "true", "yes")
 
 points_sources = set()
 
 def format_route_point(
-    name: str, point: GPXTrackPoint, next_point=None
-) -> (
-        dict)[str, Any]:
+    name: str, point: GPXTrackPoint, next_point: GPXTrackPoint | None = None
+) -> dict[str, Any]:
     """for a given `point`, creates an influxdb point
     and computes speed and distance if `next_point` exists"""
     slug_name = name.replace(" ", "-").replace(":", "-").lower()
@@ -42,9 +40,7 @@ def format_route_point(
         },
     }
     if next_point:
-        datapoint["fields"]["speed"] = (
-            point.speed_between(next_point) if next_point else 0
-        )
+        datapoint["fields"]["speed"] = point.speed_between(next_point)
         datapoint["fields"]["distance"] = point.distance_3d(next_point)
     return datapoint
 
@@ -163,7 +159,7 @@ def process_health_data(client: InfluxDBClient) -> None:
 
     records = []
     total_count = 0
-    context = etree.iterparse(export_file,recover=True)
+    context = etree.iterparse(export_file, recover=True)
     for _, elem in context:
         try:
             points_sources.add(elem.get("sourceName", "unknown"))
@@ -173,15 +169,16 @@ def process_health_data(client: InfluxDBClient) -> None:
                 records += rec
             elif elem.tag == "Workout":
                 records.append(format_workout(elem))
-            elem.clear()
         except Exception as unknown_err:
             print(f"{etree.tostring(elem).decode('UTF-8')}: {unknown_err}")
+        finally:
+            # 无论是否出错都必须清理，否则 iterparse 会持续累积内存
+            elem.clear()
+
         # batch push every ~10000
         if len(records) >= 10000:
             total_count += len(records)
             client.write_points(records, time_precision="s")
-
-            del records
             records = []
             print("已写入", total_count, "条记录")
 
