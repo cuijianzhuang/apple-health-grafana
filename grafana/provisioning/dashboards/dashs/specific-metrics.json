@@ -339,7 +339,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -496,7 +497,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -628,7 +630,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -760,7 +763,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -916,7 +920,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1114,7 +1119,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1167,7 +1173,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1301,7 +1308,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1429,7 +1437,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1570,7 +1579,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1623,7 +1633,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1758,7 +1769,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1806,7 +1818,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -1934,7 +1947,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -2063,7 +2077,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -2111,7 +2126,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
@@ -2644,7 +2660,8 @@
           "groupBy": [
             {
               "params": [
-                "1d"
+                "1d",
+                "16h"
               ],
               "type": "time"
             },
