@@ -158,8 +158,11 @@
 
         .bpm-meta { display:flex;align-items:center;justify-content:center;gap:.5rem;margin-top:.4rem; }
         .bpm-pill { font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--red);background:var(--red-dim);border:1px solid rgba(255,61,90,.22);padding:.2rem .5rem;border-radius:4px; }
-        .pulse-dot { width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;animation:pulseDot var(--pulse-ms) ease-out infinite; }
-        @keyframes pulseDot { 0%{box-shadow:0 0 0 0 var(--red-glow);opacity:1} 60%{box-shadow:0 0 0 7px rgba(255,61,90,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(255,61,90,0);opacity:1} }
+        .pulse-dot {
+            width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;
+            box-shadow:0 0 0 0 var(--red-glow);
+            transition: box-shadow .12s ease-out, opacity .12s ease-out;
+        }
 
         .latest-time { margin-top:.45rem;font-family:"JetBrains Mono",monospace;font-size:.68rem;font-weight:300;color:var(--muted); }
 
@@ -169,6 +172,46 @@
             font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
             z-index: 2;
         }
+
+        /* Hero progress bar — shows beat progress + offers visual continuity */
+        .hero-progress {
+            position: absolute;
+            left: 0; right: 0; bottom: 0;
+            height: 2px;
+            background: rgba(255,255,255,0.04);
+            z-index: 3;
+            overflow: hidden;
+        }
+        .hero-progress__bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, rgba(255,61,90,0.4), var(--red), rgba(255,143,163,0.9));
+            box-shadow: 0 0 8px var(--red-glow);
+            transform-origin: left;
+            will-change: width;
+        }
+
+        /* Pause overlay state */
+        .hero-panel.is-paused .hero-progress__bar { opacity: .4; }
+        .pause-hint {
+            position: absolute;
+            top: 1rem; left: 50%;
+            transform: translateX(-50%);
+            font-family: "JetBrains Mono", monospace;
+            font-size: .6rem;
+            letter-spacing: .18em;
+            text-transform: uppercase;
+            color: var(--muted2);
+            background: rgba(14,18,26,0.85);
+            border: 1px solid var(--border);
+            padding: .25rem .6rem;
+            border-radius: 4px;
+            z-index: 4;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .2s;
+        }
+        .hero-panel.is-paused .pause-hint { opacity: 1; }
 
         /* ── Stats ── */
         .stats-row { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:1rem;background:var(--border); }
@@ -317,6 +360,8 @@
             <div id="carousel-dots"></div>
             <span id="carousel-index"></span>
         </div>
+        <div class="pause-hint">已暂停 · 移开恢复</div>
+        <div class="hero-progress"><div class="hero-progress__bar" id="hero-progress-bar"></div></div>
     </div>
 
     <div class="stats-row">
@@ -348,83 +393,155 @@
 
 <script>
     (function () {
-        const RECENT_COUNT = 10;
+        'use strict';
+
+        /* ═══════════════════════════════════════════════════════════
+           Heart-Rate Monitor • beat-driven ECG carousel
+           ─────────────────────────────────────────────────────────── */
+
+        const RECENT_COUNT     = 10;
+        const BPM_LERP_RATE    = 0.08;   // smoothing for currentBpm transitions
+        const HEART_DOM_THRESH = 0.005;  // skip DOM write if scale change < this
+        const ECG_BEATS_VIS    = 8;      // beats visible across ECG strip
+        const ECG_RESOLUTION   = 80;     // sub-steps per beat for waveform
+
+        /* ── DOM cache ── */
+        const $ = id => document.getElementById(id);
+        const dom = {
+            panel:        document.querySelector('.hero-panel'),
+            canvas:       $('ecg-canvas'),
+            bigBpm:       $('big-bpm'),
+            latestTime:   $('latest-time'),
+            ecgLabel:     $('ecg-label'),
+            carouselIdx:  $('carousel-index'),
+            carouselDots: $('carousel-dots'),
+            progressBar:  $('hero-progress-bar'),
+            pulseDot:     document.querySelector('.pulse-dot'),
+            heartPath:    $('heart-path'),
+            heartHalo:    $('halo'),
+            heartSvg:     $('heart-svg-el'),
+            btnRefresh:   $('btn-refresh'),
+            err:          $('err'),
+            rows:         $('rows'),
+            statMin:      $('stat-min'),
+            statAvg:      $('stat-avg'),
+            statMax:      $('stat-max'),
+        };
+        const ctx = dom.canvas.getContext('2d');
 
         /* ── state ── */
-        let allReadings   = [];   // newest-first, up to 10 records
+        let allReadings   = [];
         let allBpms       = [];
-        let carouselIndex = 0;    // which record hero is currently showing
-        let currentBpm    = 72;   // bpm of the currently displayed record
-        let displayedBpm  = null;
-        let autoRefreshTimer   = null;
-        let relativeTimeInterval = null;
+        let carouselIndex = 0;
+        let currentBpm    = 72;        // smoothed value used for animations
+        let targetBpm     = 72;        // current record's true BPM
+        let displayedBpm  = null;      // BPM number shown
         let latestTimeIso = null;
         let pageVisible   = true;
+        let isPaused      = false;     // hover-pause state
+        let autoRefreshTimer     = null;
+        let relativeTimeInterval = null;
 
-        /* ── canvas ── */
-        const canvas = document.getElementById('ecg-canvas');
-        const ctx    = canvas.getContext('2d');
+        /* ── canvas + offscreen strip ── */
+        let ecgBuf = null, ecgBufCtx = null;
+        let ecgW = 0, ecgH = 0, ecgX0 = 0, dpr = 1;
 
-        /* ECG strip: a circular buffer of pixel-columns already drawn.
-           We maintain one offscreen ImageData that we shift left each beat,
-           then draw a fresh PQRST wave advancing from the right. */
-        let ecgBuf       = null;   // OffscreenCanvas or null
-        let ecgBufCtx    = null;
-        let ecgW = 0, ecgH = 0, ecgX0 = 0; // zone dimensions
+        /* Beat tracking (rAF-driven) */
+        let beatPhase    = 0;          // 0..1 within current beat
+        let lastFrameNow = null;
+        let drawnSteps   = 0;          // last step index drawn into current slot
+        let prevPathPt   = null;       // {x,y} last segment endpoint for incremental draw
 
-        /* Beat-phase tracking (rAF-driven) */
-        let lastBeatTime  = 0;     // rAF timestamp of last beat start
-        let beatProgress  = 0;     // 0..1 within current beat cycle
-        let heartScale    = 1;
-        let heartPhase    = 0;     // 0=idle 1=expand 2=contract
+        /* Heart cache to skip DOM writes */
+        let heartScale = 1, lastHeartScale = -1;
 
+        /* ── Init canvas (handles HiDPI) ── */
         function initCanvas() {
-            const panel = canvas.parentElement;
-            const w = Math.max(panel.offsetWidth, 100);
-            const h = Math.max(panel.offsetHeight, 100);
-            canvas.width  = w;
-            canvas.height = h;
+            const panel = dom.canvas.parentElement;
+            const cssW = Math.max(panel.offsetWidth, 100);
+            const cssH = Math.max(panel.offsetHeight, 100);
+            dpr = window.devicePixelRatio || 1;
 
-            const leftW = Math.round(w * 0.325);
+            dom.canvas.width  = Math.round(cssW * dpr);
+            dom.canvas.height = Math.round(cssH * dpr);
+            dom.canvas.style.width  = cssW + 'px';
+            dom.canvas.style.height = cssH + 'px';
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const leftW = Math.round(cssW * 0.325);
             ecgX0 = leftW;
-            ecgW  = w - leftW;
-            ecgH  = h;
+            ecgW  = cssW - leftW;
+            ecgH  = cssH;
 
-            // Re-create the offscreen strip buffer
+            // Offscreen strip (DPR-aware)
+            const bufW = Math.round(ecgW * dpr);
+            const bufH = Math.round(ecgH * dpr);
             try {
-                ecgBuf    = new OffscreenCanvas(ecgW, ecgH);
+                ecgBuf    = new OffscreenCanvas(bufW, bufH);
                 ecgBufCtx = ecgBuf.getContext('2d');
             } catch (_) {
-                // Safari fallback: plain canvas
-                ecgBuf    = document.createElement('canvas');
-                ecgBuf.width  = ecgW;
-                ecgBuf.height = ecgH;
+                ecgBuf = document.createElement('canvas');
+                ecgBuf.width = bufW; ecgBuf.height = bufH;
                 ecgBufCtx = ecgBuf.getContext('2d');
             }
+            ecgBufCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
-            beatProgress = 0;
+
+            // Pre-paint a faint grid across the entire strip so it doesn't appear empty
+            paintGridFull();
+            drawnSteps = 0;
+            prevPathPt = null;
         }
 
-        /* ── PQRST wave shape ── */
-        /* Returns array of [t, y_normalised] knots. t ∈ [0,1], y ∈ [-1,1] (up = positive) */
+        function paintGridFull() {
+            const c = ecgBufCtx;
+            c.save();
+            c.strokeStyle = 'rgba(255,80,110,0.07)';
+            c.lineWidth = 0.5;
+            c.setLineDash([3, 5]);
+            const cols = ECG_BEATS_VIS, rows = 4;
+            for (let i = 0; i <= cols; i++) {
+                const x = (i / cols) * ecgW;
+                c.beginPath(); c.moveTo(x, 0); c.lineTo(x, ecgH); c.stroke();
+            }
+            for (let i = 1; i < rows; i++) {
+                const y = (i / rows) * ecgH;
+                c.beginPath(); c.moveTo(0, y); c.lineTo(ecgW, y); c.stroke();
+            }
+            c.setLineDash([]);
+            c.restore();
+        }
+
+        function paintGridSlot(slotX, complexW) {
+            const c = ecgBufCtx;
+            c.save();
+            c.strokeStyle = 'rgba(255,80,110,0.07)';
+            c.lineWidth = 0.5;
+            c.setLineDash([3, 5]);
+            // Vertical grid line at slot start
+            c.beginPath(); c.moveTo(slotX, 0); c.lineTo(slotX, ecgH); c.stroke();
+            c.beginPath(); c.moveTo(slotX + complexW, 0); c.lineTo(slotX + complexW, ecgH); c.stroke();
+            // Horizontal lines clipped to slot
+            for (let i = 1; i < 4; i++) {
+                const y = (i / 4) * ecgH;
+                c.beginPath(); c.moveTo(slotX, y); c.lineTo(slotX + complexW, y); c.stroke();
+            }
+            c.setLineDash([]);
+            c.restore();
+        }
+
+        /* ── PQRST waveform shape (knot interpolation) ── */
         function pqrstKnots(amp) {
             const a = Math.max(0.15, Math.min(1, amp));
             return [
-                [0.00,  0.00],
-                [0.10,  0.00],
-                [0.16,  0.10 * a],  // P up
-                [0.22,  0.00],
-                [0.28, -0.12 * a],  // Q dip
-                [0.35,  1.00 * a],  // R peak
-                [0.42, -0.18 * a],  // S dip
-                [0.50,  0.00],
-                [0.60,  0.00],
-                [0.70,  0.30 * a],  // T wave
-                [0.82,  0.00],
-                [1.00,  0.00],
+                [0.00,  0.00], [0.10,  0.00],
+                [0.16,  0.10 * a], [0.22,  0.00],
+                [0.28, -0.12 * a], [0.35,  1.00 * a],   // QRS spike
+                [0.42, -0.18 * a], [0.50,  0.00],
+                [0.60,  0.00], [0.70,  0.30 * a],       // T wave
+                [0.82,  0.00], [1.00,  0.00],
             ];
         }
-
         function evalKnots(knots, t) {
             for (let i = 1; i < knots.length; i++) {
                 if (t <= knots[i][0]) {
@@ -436,264 +553,239 @@
             }
             return 0;
         }
-
         function bpmToAmp(bpm) {
             return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
         }
 
-        /* ── Draw ECG grid onto a context ── */
-        function drawGrid(c, w, h) {
+        /* ── Shift the strip left by complexW pixels (called once per beat at progress=0) ── */
+        function shiftStrip(complexW) {
+            // Use drawImage on self for a shift — works in OffscreenCanvas
+            const c = ecgBufCtx;
             c.save();
-            c.strokeStyle = 'rgba(255,80,110,0.07)';
-            c.lineWidth = 0.5;
-            c.setLineDash([3, 5]);
-            const cols = 8, rows = 4;
-            for (let i = 0; i <= cols; i++) {
-                const x = (i / cols) * w;
-                c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
-            }
-            for (let i = 1; i < rows; i++) {
-                const y = (i / rows) * h;
-                c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke();
-            }
-            c.setLineDash([]);
+            c.setTransform(1, 0, 0, 1, 0, 0);  // shift in device pixels
+            c.globalCompositeOperation = 'copy';
+            c.drawImage(ecgBuf, -Math.round(complexW * dpr), 0);
+            c.globalCompositeOperation = 'source-over';
+            c.setTransform(dpr, 0, 0, dpr, 0, 0);
             c.restore();
-        }
-
-        /* ── Advance the ECG strip by one beat ──
-           Shifts the buffer left by complexW pixels, then draws a new PQRST
-           wave into the right portion, animated over the beat duration.
-           Called every rAF; progress 0..1 is the beat phase. */
-        function updateEcgStrip(progress, bpm) {
-            if (!ecgBufCtx || ecgW <= 0) return;
-
-            /* How wide is one beat's worth of pixels?
-               We show ~8 beats across the strip. */
-            const beatsVisible = 8;
-            const complexW = ecgW / beatsVisible;
-
-            /* On a fresh beat (progress near 0 from previous >0.95):
-               shift the buffer left by complexW pixels. */
-            if (progress === 0) {
-                // Shift left
-                const img = ecgBufCtx.getImageData(Math.round(complexW), 0,
-                    ecgW - Math.round(complexW), ecgH);
-                ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
-                ecgBufCtx.putImageData(img, 0, 0);
-                // Redraw grid over cleared right portion
-                ecgBufCtx.save();
-                ecgBufCtx.strokeStyle = 'rgba(255,80,110,0.07)';
-                ecgBufCtx.lineWidth = 0.5;
-                ecgBufCtx.setLineDash([3, 5]);
-                const cols = 8, rows = 4;
-                for (let i = 0; i <= cols; i++) {
-                    const x = (i / cols) * ecgW;
-                    if (x < ecgW - complexW - 2) continue;
-                    ecgBufCtx.beginPath(); ecgBufCtx.moveTo(x, 0); ecgBufCtx.lineTo(x, ecgH); ecgBufCtx.stroke();
-                }
-                for (let i = 1; i < 4; i++) {
-                    const y = (i / 4) * ecgH;
-                    ecgBufCtx.beginPath(); ecgBufCtx.moveTo(ecgW - complexW, y); ecgBufCtx.lineTo(ecgW, y); ecgBufCtx.stroke();
-                }
-                ecgBufCtx.setLineDash([]);
-                ecgBufCtx.restore();
-            }
-
-            /* Draw the PQRST wave up to current progress into the right slot */
-            const baseline  = ecgH * 0.62;
-            const maxAmp    = ecgH * 0.40;
-            const slotX     = ecgW - complexW;  // left edge of current beat slot
-            const knots     = pqrstKnots(bpmToAmp(bpm));
-            const STEPS     = 80;
-            const stepsNow  = Math.floor(progress * STEPS);
-
-            /* Clear just the current slot and redraw what we have so far */
-            ecgBufCtx.save();
+            // Clear & paint fresh grid in the new rightmost slot
+            const slotX = ecgW - complexW;
             ecgBufCtx.clearRect(slotX, 0, complexW + 1, ecgH);
-
-            // grid in slot
-            ecgBufCtx.strokeStyle = 'rgba(255,80,110,0.07)';
-            ecgBufCtx.lineWidth = 0.5;
-            ecgBufCtx.setLineDash([3, 5]);
-            for (let i = 1; i < 4; i++) {
-                const y = (i / 4) * ecgH;
-                ecgBufCtx.beginPath(); ecgBufCtx.moveTo(slotX, y); ecgBufCtx.lineTo(slotX + complexW, y); ecgBufCtx.stroke();
-            }
-            ecgBufCtx.setLineDash([]);
-
-            if (stepsNow > 0) {
-                // area fill under the waveform in this slot
-                const areaGrad = ecgBufCtx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.3);
-                areaGrad.addColorStop(0,   'rgba(255,61,90,0.14)');
-                areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.05)');
-                areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
-
-                ecgBufCtx.beginPath();
-                let fx = slotX + 0 * complexW;
-                let fy = baseline - evalKnots(knots, 0) * maxAmp;
-                ecgBufCtx.moveTo(fx, fy);
-                for (let s = 1; s <= stepsNow; s++) {
-                    const t  = s / STEPS;
-                    const x  = slotX + t * complexW;
-                    const y  = baseline - evalKnots(knots, t) * maxAmp;
-                    ecgBufCtx.lineTo(x, y);
-                }
-                const lastT = stepsNow / STEPS;
-                const lastX = slotX + lastT * complexW;
-                ecgBufCtx.lineTo(lastX, baseline);
-                ecgBufCtx.lineTo(slotX, baseline);
-                ecgBufCtx.closePath();
-                ecgBufCtx.fillStyle = areaGrad;
-                ecgBufCtx.fill();
-
-                // waveform line
-                ecgBufCtx.beginPath();
-                ecgBufCtx.moveTo(slotX + 0, baseline - evalKnots(knots, 0) * maxAmp);
-                for (let s = 1; s <= stepsNow; s++) {
-                    const t = s / STEPS;
-                    ecgBufCtx.lineTo(slotX + t * complexW,
-                        baseline - evalKnots(knots, t) * maxAmp);
-                }
-                ecgBufCtx.strokeStyle = '#ff3d5a';
-                ecgBufCtx.lineWidth = 2;
-                ecgBufCtx.lineJoin = 'round'; ecgBufCtx.lineCap = 'round';
-                ecgBufCtx.shadowColor = '#ff3d5a'; ecgBufCtx.shadowBlur = 9;
-                ecgBufCtx.stroke();
-                ecgBufCtx.shadowBlur = 0;
-
-                // cursor dot at leading edge
-                const dotT = stepsNow / STEPS;
-                const dotX = slotX + dotT * complexW;
-                const dotY = baseline - evalKnots(knots, dotT) * maxAmp;
-                ecgBufCtx.beginPath();
-                ecgBufCtx.arc(dotX, dotY, 4.5, 0, Math.PI * 2);
-                ecgBufCtx.fillStyle = 'rgba(255,61,90,0.22)';
-                ecgBufCtx.fill();
-                ecgBufCtx.beginPath();
-                ecgBufCtx.arc(dotX, dotY, 2.6, 0, Math.PI * 2);
-                ecgBufCtx.fillStyle = '#fff';
-                ecgBufCtx.shadowColor = '#fff'; ecgBufCtx.shadowBlur = 10;
-                ecgBufCtx.fill();
-                ecgBufCtx.shadowBlur = 0;
-            }
-            ecgBufCtx.restore();
+            paintGridSlot(slotX, complexW);
         }
 
-        /* ── Composite: blit buffer onto main canvas ── */
-        function drawFrame(progress, bpm) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            if (!ecgBufCtx) return;
+        /* ── Incremental ECG draw: only the newly-revealed segment ── */
+        function drawEcgSegment(bpm, beatBpmCached, progress, isReset) {
+            const beatsVisible = ECG_BEATS_VIS;
+            const complexW     = ecgW / beatsVisible;
+            const slotX        = ecgW - complexW;
+            const baseline     = ecgH * 0.62;
+            const maxAmp       = ecgH * 0.40;
+            const knots        = pqrstKnots(bpmToAmp(beatBpmCached));
+            const targetSteps  = Math.floor(progress * ECG_RESOLUTION);
 
-            updateEcgStrip(progress, bpm);
+            if (isReset) {
+                drawnSteps = 0;
+                prevPathPt = {
+                    x: slotX,
+                    y: baseline - evalKnots(knots, 0) * maxAmp,
+                };
+            }
 
-            // Blit buffer starting at ecgX0
-            ctx.save();
-            ctx.drawImage(ecgBuf, ecgX0, 0);
+            if (targetSteps <= drawnSteps) return;
 
-            // Left fade mask (blends ECG into hero-left panel)
+            const c = ecgBufCtx;
+            // Stroke the new segment from drawnSteps → targetSteps
+            c.save();
+            c.strokeStyle = '#ff3d5a';
+            c.lineWidth = 2;
+            c.lineJoin = 'round'; c.lineCap = 'round';
+            c.shadowColor = '#ff3d5a'; c.shadowBlur = 9;
+            c.beginPath();
+            c.moveTo(prevPathPt.x, prevPathPt.y);
+            let lastPt = prevPathPt;
+            for (let s = drawnSteps + 1; s <= targetSteps; s++) {
+                const t = s / ECG_RESOLUTION;
+                const x = slotX + t * complexW;
+                const y = baseline - evalKnots(knots, t) * maxAmp;
+                c.lineTo(x, y);
+                lastPt = { x, y };
+            }
+            c.stroke();
+            c.shadowBlur = 0;
+            c.restore();
+
+            drawnSteps = targetSteps;
+            prevPathPt = lastPt;
+        }
+
+        /* ── Composite frame onto main canvas ── */
+        function compositeFrame(progress, beatBpmCached) {
+            ctx.clearRect(0, 0, dom.canvas.width / dpr, dom.canvas.height / dpr);
+            if (!ecgBuf) return;
+
+            const beatsVisible = ECG_BEATS_VIS;
+            const complexW     = ecgW / beatsVisible;
+
+            // Blit buffer (DPR-aware)
+            ctx.drawImage(ecgBuf, 0, 0, ecgBuf.width, ecgBuf.height,
+                ecgX0, 0, ecgW, ecgH);
+
+            // Soft red area-fill under the visible waveform area (cheap full-strip overlay)
+            // — kept lightweight, applied only over the strip
+            const baseline = ecgH * 0.62;
+            const areaH    = ecgH * 0.40;
+            const areaGrad = ctx.createLinearGradient(0, baseline - areaH, 0, baseline);
+            areaGrad.addColorStop(0, 'rgba(255,61,90,0.04)');
+            areaGrad.addColorStop(1, 'rgba(255,61,90,0)');
+            ctx.fillStyle = areaGrad;
+            ctx.fillRect(ecgX0, baseline - areaH, ecgW, areaH);
+
+            // Left fade mask
             const fadeW = 48;
             const mask  = ctx.createLinearGradient(ecgX0, 0, ecgX0 + fadeW, 0);
             mask.addColorStop(0, 'rgba(14,18,26,1)');
             mask.addColorStop(1, 'rgba(14,18,26,0)');
             ctx.fillStyle = mask;
-            ctx.fillRect(ecgX0, 0, fadeW + 2, canvas.height);
+            ctx.fillRect(ecgX0, 0, fadeW + 2, ecgH);
 
-            // Sweep glow just ahead of cursor
-            const beatsVisible = 8;
-            const complexW = ecgW / beatsVisible;
-            const cursorX  = ecgX0 + ecgW - complexW * (1 - progress);
-            const sweepGrad = ctx.createLinearGradient(cursorX - 22, 0, cursorX + 8, 0);
-            sweepGrad.addColorStop(0, 'rgba(255,61,90,0)');
-            sweepGrad.addColorStop(0.6, 'rgba(255,90,120,0.18)');
-            sweepGrad.addColorStop(1, 'rgba(255,200,220,0.55)');
-            ctx.fillStyle = sweepGrad;
-            ctx.fillRect(cursorX - 22, 0, 30, canvas.height);
+            // Sweep glow + cursor dot at leading edge
+            const cursorX = ecgX0 + ecgW - complexW * (1 - progress);
+            const sweep   = ctx.createLinearGradient(cursorX - 24, 0, cursorX + 8, 0);
+            sweep.addColorStop(0,   'rgba(255,61,90,0)');
+            sweep.addColorStop(0.6, 'rgba(255,90,120,0.16)');
+            sweep.addColorStop(1,   'rgba(255,200,220,0.5)');
+            ctx.fillStyle = sweep;
+            ctx.fillRect(cursorX - 24, 0, 32, ecgH);
 
-            ctx.restore();
+            // Cursor dot — draw on main canvas so it doesn't smear into buffer
+            if (prevPathPt) {
+                const dotX = ecgX0 + prevPathPt.x;
+                const dotY = prevPathPt.y;
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(dotX, dotY, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,61,90,0.22)';
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(dotX, dotY, 2.6, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = '#fff'; ctx.shadowBlur = 10;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+
+                // BPM label above current beat's R-peak (only after we've drawn past R)
+                if (progress > 0.36) {
+                    const rPeakY = ecgH * 0.62 - bpmToAmp(beatBpmCached) * ecgH * 0.40;
+                    const rPeakX = ecgX0 + (ecgW - complexW) + 0.35 * complexW;
+                    ctx.save();
+                    ctx.font = '600 11px "JetBrains Mono", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                    ctx.shadowColor = 'rgba(255,61,90,0.6)';
+                    ctx.shadowBlur = 6;
+                    ctx.fillText(String(Math.round(beatBpmCached)), rPeakX, rPeakY - 10);
+                    ctx.restore();
+                }
+            }
         }
 
-        /* ── Heart beat animation — driven by same beatPhase as ECG ── */
-        function updateHeart(now) {
-            const p = beatPhase; // 0..1 synced with ECG
-            if (p < 0.12) {
-                heartScale = 1 + (p / 0.12) * 0.13;
-            } else if (p < 0.38) {
-                heartScale = 1.13 - ((p - 0.12) / 0.26) * 0.13;
-            } else {
-                heartScale = 1;
-            }
+        /* ── Heart animation — phase-driven, DOM-throttled ── */
+        function updateHeart() {
+            const p = beatPhase;
+            let next;
+            if (p < 0.12)      next = 1 + (p / 0.12) * 0.13;
+            else if (p < 0.38) next = 1.13 - ((p - 0.12) / 0.26) * 0.13;
+            else               next = 1;
+            heartScale = next;
+
+            // Skip DOM write if change is imperceptible
+            if (Math.abs(heartScale - lastHeartScale) < HEART_DOM_THRESH) return;
+            lastHeartScale = heartScale;
 
             const cx = 50, cy = 48;
-            const tf = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
-            document.getElementById('heart-path').setAttribute('transform', tf);
-            const halo = document.getElementById('halo');
-            halo.setAttribute('transform', tf);
-            halo.setAttribute('opacity', (0.3 + (heartScale - 1) * 4).toFixed(3));
-            document.getElementById('heart-svg-el').style.filter =
+            const tf = `translate(${cx},${cy}) scale(${heartScale.toFixed(3)}) translate(${-cx},${-cy})`;
+            dom.heartPath.setAttribute('transform', tf);
+            dom.heartHalo.setAttribute('transform', tf);
+            dom.heartHalo.setAttribute('opacity', (0.3 + (heartScale - 1) * 4).toFixed(3));
+            dom.heartSvg.style.filter =
                 `drop-shadow(0 0 ${Math.round((heartScale - 1) * 180)}px rgba(255,61,90,0.7))`;
+
+            // Sync the small pulse dot in BPM block
+            if (dom.pulseDot) {
+                const intensity = Math.max(0, (heartScale - 1) / 0.13);
+                const ring = Math.round(intensity * 9);
+                dom.pulseDot.style.boxShadow = ring > 0
+                    ? `0 0 0 ${ring}px rgba(255,61,90,${0.35 * (1 - intensity * 0.7)})`
+                    : '0 0 0 0 rgba(255,61,90,0)';
+                dom.pulseDot.style.opacity = String(0.55 + intensity * 0.45);
+            }
         }
 
-        function setPulseInterval(bpm) {
-            document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
-        }
-
-        /* ── BPM number roll animation ── */
+        /* ── BPM number rolling animation ── */
         function animateBpm(target) {
-            const node = document.getElementById('big-bpm');
-            if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
+            const node = dom.bigBpm;
+            if (target == null || isNaN(target)) {
+                displayedBpm = null;
+                node.textContent = '—';
+                return;
+            }
             const goal  = Math.round(target);
             const start = displayedBpm == null ? goal : displayedBpm;
-            const dur   = 500, t0 = performance.now();
+            if (goal === start) { node.textContent = String(goal); displayedBpm = goal; return; }
+            const dur = 500, t0 = performance.now();
             function step(ts) {
-                const p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+                const p = Math.min((ts - t0) / dur, 1);
+                const e = 1 - Math.pow(1 - p, 3);
                 node.textContent = String(Math.round(start + (goal - start) * e));
-                if (p < 1) requestAnimationFrame(step); else displayedBpm = goal;
+                if (p < 1) requestAnimationFrame(step);
+                else displayedBpm = goal;
             }
             requestAnimationFrame(step);
         }
 
-        /* ── Carousel: show record at idx in hero ── */
+        /* ── Carousel: jump to record idx ── */
+        let dotEls = [], rowEls = [];
+
         function showCarouselItem(idx, animate = true) {
             if (!allReadings.length) return;
-            idx = ((idx % allReadings.length) + allReadings.length) % allReadings.length;
+            const len = allReadings.length;
+            idx = ((idx % len) + len) % len;
             carouselIndex = idx;
             const r   = allReadings[idx];
             const bpm = Number(r.bpm) || 72;
-
-            currentBpm    = bpm;
+            targetBpm     = bpm;
             latestTimeIso = r.time;
 
-            const bpmEl  = document.getElementById('big-bpm');
-            const timeEl = document.getElementById('latest-time');
-            const idxEl  = document.getElementById('carousel-index');
+            const updateText = () => {
+                animateBpm(bpm);
+                dom.latestTime.textContent = fmtRelativeTime(latestTimeIso);
+                dom.carouselIdx.textContent = `${idx + 1} / ${len}`;
+            };
 
             if (animate) {
-                bpmEl.classList.add('fade-swap');
-                timeEl.classList.add('fade-swap');
+                dom.bigBpm.classList.add('fade-swap');
+                dom.latestTime.classList.add('fade-swap');
                 setTimeout(() => {
-                    animateBpm(bpm);
-                    setPulseInterval(bpm);
-                    timeEl.textContent = fmtRelativeTime(latestTimeIso);
-                    idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
-                    bpmEl.classList.remove('fade-swap');
-                    timeEl.classList.remove('fade-swap');
+                    updateText();
+                    dom.bigBpm.classList.remove('fade-swap');
+                    dom.latestTime.classList.remove('fade-swap');
                 }, 160);
             } else {
-                animateBpm(bpm);
-                setPulseInterval(bpm);
-                timeEl.textContent = fmtRelativeTime(latestTimeIso);
-                idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
+                updateText();
             }
 
-            document.querySelectorAll('#rows tr').forEach((tr, i) => {
-                tr.classList.toggle('row-active', i === idx);
-            });
-            const active = document.querySelector('#rows tr.row-active');
-            if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Use cached element arrays (no querySelectorAll per call)
+            for (let i = 0; i < rowEls.length; i++) {
+                rowEls[i].classList.toggle('row-active', i === idx);
+            }
+            for (let i = 0; i < dotEls.length; i++) {
+                dotEls[i].classList.toggle('active', i === idx);
+            }
 
-            document.querySelectorAll('.carousel-dot').forEach((d, i) => {
-                d.classList.toggle('active', i === idx);
-            });
+            const active = rowEls[idx];
+            if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
 
         /* ── Helpers ── */
@@ -701,10 +793,11 @@
             if (!iso) return '—';
             const d = new Date(iso);
             if (isNaN(d)) return iso;
-            return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit',
-                hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            return d.toLocaleString('zh-CN', {
+                year:'numeric', month:'2-digit', day:'2-digit',
+                hour:'2-digit', minute:'2-digit', second:'2-digit',
+            });
         }
-
         function fmtRelativeTime(iso) {
             if (!iso) return '—';
             const d = new Date(iso);
@@ -716,28 +809,24 @@
             if (hrs < 24)  return `${hrs} 小时前`;
             return fmtTime(iso);
         }
-
         function bpmCat(bpm) {
             if (bpm >= 100) return 'bpm-high';
             if (bpm <= 60)  return 'bpm-low';
             return '';
         }
-
         function updateStats() {
             if (!allBpms.length) return;
             const mn = Math.min(...allBpms), mx = Math.max(...allBpms);
             const av = Math.round(allBpms.reduce((a, b) => a + b, 0) / allBpms.length);
-            document.getElementById('stat-min').innerHTML = `${mn}<span class="stat-unit">bpm</span>`;
-            document.getElementById('stat-avg').innerHTML = `${av}<span class="stat-unit">bpm</span>`;
-            document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
+            dom.statMin.innerHTML = `${mn}<span class="stat-unit">bpm</span>`;
+            dom.statAvg.innerHTML = `${av}<span class="stat-unit">bpm</span>`;
+            dom.statMax.innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
         }
-
         function resetStats() {
-            ['stat-min', 'stat-avg', 'stat-max'].forEach(id => {
-                document.getElementById(id).innerHTML = `—<span class="stat-unit">bpm</span>`;
+            [dom.statMin, dom.statAvg, dom.statMax].forEach(el => {
+                el.innerHTML = `—<span class="stat-unit">bpm</span>`;
             });
         }
-
         function pickRecentReadings(readings) {
             return [...readings]
                 .filter(r => !isNaN(new Date(r.time).getTime()))
@@ -745,21 +834,22 @@
                 .slice(0, RECENT_COUNT);
         }
 
-        /* ── Render data ── */
-        function render(readings, latest) {
-            document.getElementById('err').hidden = true;
+        /* ── Render fresh data ── */
+        function render(readings) {
+            dom.err.hidden = true;
             clearInterval(autoRefreshTimer);
             clearInterval(relativeTimeInterval);
-            document.getElementById('rows').innerHTML = '';
+            dom.rows.innerHTML = '';
+            dotEls = []; rowEls = [];
 
             const recent = readings.length ? pickRecentReadings(readings) : [];
 
             if (!recent.length) {
                 animateBpm(null);
-                document.getElementById('latest-time').textContent = '暂无心率记录';
-                document.getElementById('carousel-index').textContent = '';
-                document.getElementById('carousel-dots').innerHTML = '';
-                document.getElementById('ecg-label').textContent = '心率趋势';
+                dom.latestTime.textContent = '暂无心率记录';
+                dom.carouselIdx.textContent = '';
+                dom.carouselDots.innerHTML = '';
+                dom.ecgLabel.textContent = '心率趋势';
                 allReadings = []; allBpms = [];
                 resetStats();
                 if (readings.length) autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
@@ -769,103 +859,163 @@
             allReadings = recent;
             allBpms     = allReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
             updateStats();
+            dom.ecgLabel.textContent = `最近 ${allReadings.length} 条`;
 
-            document.getElementById('ecg-label').textContent = `最近 ${allReadings.length} 条`;
-
-            // Carousel dots
-            const dotsEl = document.getElementById('carousel-dots');
-            dotsEl.innerHTML = '';
+            // Build carousel dots
+            const dotsFrag = document.createDocumentFragment();
             allReadings.forEach((_, i) => {
                 const d = document.createElement('span');
                 d.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-                d.addEventListener('click', () => { carouselIndex = i; showCarouselItem(i); });
-                dotsEl.appendChild(d);
+                d.addEventListener('click', () => { beatPhase = 0; showCarouselItem(i); });
+                dotsFrag.appendChild(d);
+                dotEls.push(d);
             });
+            dom.carouselDots.innerHTML = '';
+            dom.carouselDots.appendChild(dotsFrag);
 
-            // Table rows
-            const tbody = document.getElementById('rows');
+            // Build table rows
+            const rowsFrag = document.createDocumentFragment();
             allReadings.forEach((r, i) => {
                 const bVal = r.bpm != null ? Math.round(r.bpm) : null;
                 const tr   = document.createElement('tr');
                 if (i === 0) tr.classList.add('row-active');
                 tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
-                tr.addEventListener('click', () => { carouselIndex = i; showCarouselItem(i); });
-                tbody.appendChild(tr);
+                tr.addEventListener('click', () => { beatPhase = 0; showCarouselItem(i); });
+                rowsFrag.appendChild(tr);
+                rowEls.push(tr);
             });
+            dom.rows.appendChild(rowsFrag);
 
             carouselIndex = 0;
+            currentBpm = targetBpm = Number(allReadings[0].bpm) || 72;
             showCarouselItem(0, false);
 
+            // Refresh relative-time text every minute (matches current carousel item)
             relativeTimeInterval = setInterval(() => {
-                document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+                dom.latestTime.textContent = fmtRelativeTime(latestTimeIso);
             }, 60000);
 
             autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
         }
 
         function showError(msg) {
-            const el = document.getElementById('err');
-            el.textContent = msg; el.hidden = !msg;
+            dom.err.textContent = msg;
+            dom.err.hidden = !msg;
         }
 
         async function fetchRecent(silent = false) {
-            const btn = document.getElementById('btn-refresh');
+            const btn = dom.btnRefresh;
             if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
             try {
                 const res  = await fetch('/api/heartbeat/recent?limit=10');
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
-                render(data.readings || [], data.latest);
+                if (!res.ok) {
+                    showError(data.error || data.detail || '请求失败 ' + res.status);
+                    return;
+                }
+                render(data.readings || []);
+            } catch (_) {
+                showError('无法连接 API。');
             } finally {
                 if (!silent) { btn.disabled = false; btn.textContent = '从服务器读取'; }
             }
         }
 
-        /* ── Main rAF loop ──
-           Each record gets ONE full heartbeat (phase 0→1).
-           When phase reaches 1, finish the beat, switch record, reset to 0. */
-        let beatPhase    = 0;
-        let lastFrameNow = null;
+        /* ═══════════════════════════════════════════════════════════
+           Main rAF loop
+           ─────────────────────────────────────────────────────────── */
+        let beatBpmLocked = 72;  // BPM used for the in-progress beat (locked at beat start)
 
         function loop(now) {
             requestAnimationFrame(loop);
-            if (!pageVisible) return;
-            if (lastFrameNow === null) { lastFrameNow = now; lastBeatTime = now; }
-
-            if (!allReadings.length) { lastFrameNow = now; return; }
-
-            const beatMs = 60000 / currentBpm;
-            const dt     = now - lastFrameNow;
+            if (!pageVisible) { lastFrameNow = null; return; }
+            if (lastFrameNow === null) { lastFrameNow = now; beatBpmLocked = currentBpm; }
+            const dt = now - lastFrameNow;
             lastFrameNow = now;
 
-            beatPhase += dt / beatMs;
+            if (!allReadings.length) return;
 
-            if (beatPhase >= 1) {
-                drawFrame(1, currentBpm);          // finish this beat fully
-                beatPhase = beatPhase - 1;         // carry over overshoot
+            // Smoothly interpolate currentBpm toward targetBpm (no abrupt jumps)
+            // Lerp rate is dt-aware so it's framerate-independent.
+            const lerpAmt = 1 - Math.pow(1 - BPM_LERP_RATE, dt / 16.67);
+            currentBpm += (targetBpm - currentBpm) * lerpAmt;
 
-                const nextIdx = (carouselIndex + 1) % allReadings.length;
-                showCarouselItem(nextIdx);         // updates currentBpm for new record
-
-                lastBeatTime = now;
-                drawFrame(0, currentBpm);          // shift strip, start new slot
-            } else {
-                drawFrame(beatPhase, currentBpm);
+            if (isPaused) {
+                // Hold the current frame, no advance
+                compositeFrame(beatPhase, beatBpmLocked);
+                updateHeart();
+                return;
             }
 
-            updateHeart(now);
+            const beatMs = 60000 / Math.max(1, currentBpm);
+            beatPhase += dt / beatMs;
+
+            // Update progress bar (CSS width transition kept off for direct control)
+            dom.progressBar.style.width = Math.min(100, beatPhase * 100) + '%';
+
+            if (beatPhase >= 1) {
+                // Finish current beat fully (draw remainder)
+                drawEcgSegment(currentBpm, beatBpmLocked, 1, false);
+                compositeFrame(1, beatBpmLocked);
+
+                // Carry overshoot, switch to next record
+                beatPhase -= 1;
+                const nextIdx = (carouselIndex + 1) % allReadings.length;
+                showCarouselItem(nextIdx);
+                // Re-anchor BPM lock for the new beat (use smoothed current — will lerp toward target)
+                beatBpmLocked = currentBpm;
+
+                // Shift strip and start fresh slot
+                const complexW = ecgW / ECG_BEATS_VIS;
+                shiftStrip(complexW);
+                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, true);
+                compositeFrame(beatPhase, beatBpmLocked);
+            } else {
+                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, false);
+                compositeFrame(beatPhase, beatBpmLocked);
+            }
+
+            updateHeart();
         }
+
+        /* ═══════════════════════════════════════════════════════════
+           Event wiring
+           ─────────────────────────────────────────────────────────── */
 
         document.addEventListener('visibilitychange', () => {
             pageVisible = !document.hidden;
-            if (pageVisible) { lastBeatTime = performance.now(); prevBeatPhase = 0; }
+            if (pageVisible) {
+                lastFrameNow = null;
+                lastHeartScale = -1;
+            }
         });
-        document.getElementById('btn-refresh').addEventListener('click', () => fetchRecent(false));
-        window.addEventListener('resize', () => { initCanvas(); });
 
+        dom.btnRefresh.addEventListener('click', () => fetchRecent(false));
+
+        // Hover-pause carousel
+        dom.panel.addEventListener('mouseenter', () => {
+            isPaused = true;
+            dom.panel.classList.add('is-paused');
+        });
+        dom.panel.addEventListener('mouseleave', () => {
+            isPaused = false;
+            dom.panel.classList.remove('is-paused');
+        });
+
+        // Resize: re-init canvas (debounced via rAF)
+        let resizeRaf = null;
+        window.addEventListener('resize', () => {
+            if (resizeRaf) cancelAnimationFrame(resizeRaf);
+            resizeRaf = requestAnimationFrame(() => {
+                initCanvas();
+                resizeRaf = null;
+            });
+        });
+
+        /* ── Bootstrap ── */
         initCanvas();
         requestAnimationFrame(loop);
-        fetchRecent(false).catch(() => { showError('无法连接 API。'); });
+        fetchRecent(false);
     })();
 </script>
 </body>
