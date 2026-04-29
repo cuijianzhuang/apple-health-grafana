@@ -199,12 +199,6 @@
     <div style="display:flex;flex-direction:column;gap:.5rem;align-items:flex-end;">
       <div class="toolbar">
         <button type="button" id="btn-refresh" class="primary">从服务器读取</button>
-        <button type="button" id="btn-demo">演示数据</button>
-      </div>
-      <p class="hint" id="key-hint" hidden>请填写 X-API-Key 后重新加载。</p>
-      <div class="toolbar" id="key-row" hidden>
-        <input type="password" id="api-key" autocomplete="off" placeholder="X-API-Key" />
-        <button type="button" id="btn-save-key">记住</button>
       </div>
     </div>
   </header>
@@ -212,7 +206,7 @@
   <!-- Unified hero: ECG fills background, heart+data overlay left side -->
   <div class="hero-panel">
     <canvas id="ecg-canvas"></canvas>
-    <div class="ecg-label">实时心电图</div>
+    <div class="ecg-label" id="ecg-label">心率趋势</div>
 
     <div class="hero-left">
       <!-- Refined heart SVG using cubic bezier curves -->
@@ -289,160 +283,119 @@
 
 <script>
   (function () {
-    /* ── storage ── */
-    const STORAGE_KEY = "health_api_key";
-    function getSavedKey() { try { return localStorage.getItem(STORAGE_KEY) || ""; } catch { return ""; } }
-    function setSavedKey(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch {} }
-
     /* ── state ── */
     let displayedBpm = null;
     let currentBpm = 72;
-    let targetBpm = 72;
-    let liveMode = false;
     let allBpms = [];
-    let demoInterval = null;
+    let sparklineValues = [];   // actual BPM readings (chronological) for real-data mode
+    let autoRefreshTimer = null;
+    let relativeTimeInterval = null;
+    let latestTimeIso = null;
+    let pageVisible = true;
 
     /* ── canvas ── */
     const canvas = document.getElementById('ecg-canvas');
     const ctx = canvas.getContext('2d');
-    let ecgBuffer = [];
-    let ecgPhase = 0;
     let lastBeat = 0;
     let heartScale = 1;
-    let heartPhase = 0; // 0=idle 1=expand 2=contract
-    let bpmDriftTimer = 0;
-    let lastFrameTs = 0;
-    let liveBpmDisplay = -1;
+    let heartPhase = 0;         // 0=idle 1=expand 2=contract
 
     function initCanvas() {
       const panel = canvas.parentElement;
       const w = Math.max(panel.offsetWidth, 100);
       const h = Math.max(panel.offsetHeight, 100);
       canvas.width = w; canvas.height = h;
-      while (ecgBuffer.length < w) ecgBuffer.unshift(0.5);
-      while (ecgBuffer.length > w) ecgBuffer.shift();
+      drawSparkline();
     }
 
-    /* PQRST waveform */
-    function ecgWaveY(p) {
-      p = p % 1;
-      if (p < 0.05) return 0.5;
-      if (p < 0.10) return 0.5 + (p - 0.05) * 3;
-      if (p < 0.15) return 0.65 - (p - 0.10) * 3;
-      if (p < 0.18) return 0.5 - (p - 0.15) * 6;
-      if (p < 0.22) return 0.32 + (p - 0.18) * 52;
-      if (p < 0.26) return 2.4 - (p - 0.22) * 52;
-      if (p < 0.30) return 0.32 + (p - 0.26) * 5;
-      if (p < 0.40) return 0.52 - (p - 0.30) * 1.5;
-      if (p < 0.50) return 0.37 + (p - 0.40) * 3.5;
-      if (p < 0.60) return 0.72 - (p - 0.50) * 3.5;
-      return 0.5;
-    }
-
-    function drawEcg() {
+    /* ── shared canvas helpers ── */
+    function canvasLayout() {
       const w = canvas.width, h = canvas.height;
-      if (!w || !h) return;
-      ctx.clearRect(0, 0, w, h);
-
-      /* ECG starts at ~28% of width, fades in from 20%-32% */
       const startX = Math.round(w * 0.20);
       const fadeEnd = Math.round(w * 0.33);
-      const bufLen  = ecgBuffer.length;
+      return { w, h, startX, fadeEnd };
+    }
 
-      /* helper: map buffer index to canvas x within [startX, w] */
-      const toX = i => startX + (i / (bufLen - 1)) * (w - startX);
-      const toY = v => h * (1 - Math.max(0, Math.min(1, v * 0.52 + 0.22)));
-
-      /* area fill with left-edge fade */
-      const areaGrad = ctx.createLinearGradient(startX, 0, w, 0);
-      areaGrad.addColorStop(0,    'rgba(255,61,90,0)');
-      areaGrad.addColorStop(0.12, 'rgba(255,61,90,0.08)');
-      areaGrad.addColorStop(1,    'rgba(255,61,90,0.14)');
-      const vertGrad = ctx.createLinearGradient(0, 0, 0, h);
-      vertGrad.addColorStop(0, 'rgba(255,61,90,0.18)');
-      vertGrad.addColorStop(1, 'rgba(255,61,90,0)');
-
-      ctx.save();
-      ctx.beginPath();
-      for (let i = 0; i < bufLen; i++) {
-        const x = toX(i), y = toY(ecgBuffer[i]);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.lineTo(w, h); ctx.lineTo(startX, h); ctx.closePath();
-      ctx.fillStyle = vertGrad;
-      /* mask left edge with clip */
-      ctx.save();
-      ctx.rect(fadeEnd, 0, w - fadeEnd, h);
-      ctx.clip();
-      ctx.fill();
-      ctx.restore();
-      ctx.restore();
-
-      /* subtle horizontal grid lines */
+    function drawSharedDecor(fadeEnd, w, h) {
       ctx.strokeStyle = 'rgba(255,255,255,0.035)';
       ctx.lineWidth = 0.5;
       [0.25, 0.5, 0.75].forEach(f => {
         ctx.beginPath(); ctx.moveTo(fadeEnd, h * f); ctx.lineTo(w, h * f); ctx.stroke();
       });
+    }
 
-      /* main ECG line with opacity fade on left edge */
+    /* ── real-data sparkline (actual BPM trend) ── */
+    function drawSparkline() {
+      const { w, h, startX, fadeEnd } = canvasLayout();
+      ctx.clearRect(0, 0, w, h);
+      if (!sparklineValues.length) return;
+
+      const vals = sparklineValues;
+      const vmin = Math.min(...vals), vmax = Math.max(...vals);
+      const span = Math.max(vmax - vmin, 10);
+      const pad = 0.18;
+      const n = vals.length;
+      const toX = i => startX + (i / Math.max(n - 1, 1)) * (w - startX - 4);
+      const toY = v => h * (1 - pad - ((v - vmin) / span) * (1 - pad * 2));
+
+      /* area fill */
+      const vertGrad = ctx.createLinearGradient(0, 0, 0, h);
+      vertGrad.addColorStop(0, 'rgba(255,61,90,0.18)');
+      vertGrad.addColorStop(1, 'rgba(255,61,90,0)');
       ctx.save();
       ctx.beginPath();
-      for (let i = 0; i < bufLen; i++) {
-        const x = toX(i), y = toY(ecgBuffer[i]);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      for (let i = 0; i < n; i++) {
+        const x = toX(i), y = toY(vals[i]);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
-      /* fade mask: transparent on far left, fully opaque by fadeEnd */
+      ctx.lineTo(toX(n - 1), h); ctx.lineTo(startX, h); ctx.closePath();
+      ctx.save(); ctx.rect(fadeEnd, 0, w - fadeEnd, h); ctx.clip();
+      ctx.fillStyle = vertGrad; ctx.fill();
+      ctx.restore(); ctx.restore();
+
+      drawSharedDecor(fadeEnd, w, h);
+
+      /* line with left-fade */
       const lineGrad = ctx.createLinearGradient(startX, 0, fadeEnd + 30, 0);
-      lineGrad.addColorStop(0,   'rgba(255,61,90,0)');
-      lineGrad.addColorStop(1,   'rgba(255,61,90,1)');
-      ctx.strokeStyle = lineGrad;
-      ctx.lineWidth = 2;
+      lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
+      lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
+      ctx.save();
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = toX(i), y = toY(vals[i]);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = lineGrad; ctx.lineWidth = 2;
       ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.restore();
+      ctx.stroke(); ctx.shadowBlur = 0; ctx.restore();
 
-      /* bright tracer dot at the head (right edge) */
-      const lastV = ecgBuffer[bufLen - 1];
-      const ty = toY(lastV);
+      /* dot at latest value */
       ctx.beginPath();
-      ctx.arc(w - 2, ty, 3, 0, Math.PI * 2);
+      ctx.arc(toX(n - 1) + 2, toY(vals[n - 1]), 3, 0, Math.PI * 2);
       ctx.fillStyle = '#fff'; ctx.fill();
     }
 
-    /* heart beat animation */
+    /* ── heart beat animation ── */
     function updateHeart(now) {
-      if (!liveMode) return;
       const beatMs = Math.round(60000 / currentBpm);
       if (now - lastBeat >= beatMs) { lastBeat = now; heartPhase = 1; }
-      if (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
-      else if (heartPhase === 2) { heartScale = Math.max(1.0, heartScale - 0.007); if (heartScale <= 1.0) heartPhase = 0; }
+      if      (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
+      else if (heartPhase === 2) { heartScale = Math.max(1.0,  heartScale - 0.007); if (heartScale <= 1.0)  heartPhase = 0; }
 
       const cx = 50, cy = 48;
       const t = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
       document.getElementById('heart-path').setAttribute('transform', t);
       document.getElementById('halo').setAttribute('transform', t);
       document.getElementById('halo').setAttribute('opacity', (0.3 + (heartScale - 1) * 3.5).toFixed(3));
-      const glow = Math.round((heartScale - 1) * 160);
-      document.getElementById('heart-svg-el').style.filter = `drop-shadow(0 0 ${glow}px rgba(255,61,90,0.65))`;
-    }
-
-    function updateEcgLive(now) {
-      if (!liveMode) return;
-      const beatMs = Math.round(60000 / currentBpm);
-      ecgPhase = (now % beatMs) / beatMs;
-      const raw = ecgWaveY(ecgPhase);
-      ecgBuffer.push(Math.max(0, Math.min(1.8, raw)));
-      if (ecgBuffer.length > canvas.width) ecgBuffer.shift();
+      document.getElementById('heart-svg-el').style.filter =
+        `drop-shadow(0 0 ${Math.round((heartScale - 1) * 160)}px rgba(255,61,90,0.65))`;
     }
 
     function setPulseInterval(bpm) {
       document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
     }
 
-    /* smooth BPM counter for static render */
     function animateBpm(target) {
       const node = document.getElementById('big-bpm');
       if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
@@ -456,23 +409,23 @@
       requestAnimationFrame(step);
     }
 
-    /* fill ecg from static readings */
-    function buildStaticEcg(values) {
-      if (!values.length) return;
-      const w = canvas.width;
-      ecgBuffer = [];
-      const vmin = Math.min(...values), vmax = Math.max(...values), span = Math.max(vmax - vmin, 1);
-      for (let i = 0; i < w; i++) {
-        const idx = Math.floor((i / w) * values.length);
-        ecgBuffer.push(0.15 + ((values[idx] - vmin) / span) * 0.7);
-      }
-    }
-
     function fmtTime(iso) {
       if (!iso) return '—';
       const d = new Date(iso);
       if (isNaN(d)) return iso;
       return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    }
+
+    function fmtRelativeTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d)) return fmtTime(iso);
+      const mins = Math.floor((Date.now() - d) / 60000);
+      if (mins < 1)  return '刚刚';
+      if (mins < 60) return `${mins} 分钟前`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24)  return `${hrs} 小时前`;
+      return fmtTime(iso);
     }
 
     function bpmCat(bpm) {
@@ -490,28 +443,40 @@
       document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
     }
 
+    /* ── render real data ── */
     function render(readings, latest) {
       document.getElementById('err').hidden = true;
-      clearInterval(demoInterval);
-      liveMode = false;
+      clearInterval(autoRefreshTimer);
+      clearInterval(relativeTimeInterval);
 
       if (!readings.length) {
         animateBpm(null);
         document.getElementById('latest-time').textContent = '暂无心率记录';
+        sparklineValues = [];
+        document.getElementById('ecg-label').textContent = '心率趋势';
+        drawSparkline();
         return;
       }
 
       const ordered = [...readings].sort((a, b) => new Date(b.time) - new Date(a.time));
       const bpm = latest?.bpm ?? ordered[0]?.bpm;
-      currentBpm = Number(bpm) || 72; targetBpm = currentBpm;
+      currentBpm = Number(bpm) || 72;
       animateBpm(bpm);
       setPulseInterval(currentBpm);
-      document.getElementById('latest-time').textContent = fmtTime(latest?.time || ordered[0]?.time);
+
+      latestTimeIso = latest?.time || ordered[0]?.time;
+      document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+      relativeTimeInterval = setInterval(() => {
+        document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+      }, 60000);
 
       allBpms = readings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
       updateStats();
 
-      buildStaticEcg(ordered.slice(0, 40).reverse().map(r => r.bpm));
+      /* sparkline uses actual readings in chronological order */
+      sparklineValues = ordered.slice(0, 40).reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v));
+      document.getElementById('ecg-label').textContent = '心率趋势';
+      drawSparkline();
 
       const tbody = document.getElementById('rows');
       tbody.innerHTML = '';
@@ -522,90 +487,40 @@
         tbody.appendChild(tr);
       }
 
-      liveMode = true;
-    }
-
-    function startDemoLive() {
-      clearInterval(demoInterval);
-      demoInterval = setInterval(() => {
-        targetBpm = Math.max(52, Math.min(118, targetBpm + (Math.random() - 0.48) * 10));
-        const bVal = Math.round(currentBpm);
-        allBpms.push(bVal);
-        if (allBpms.length > 80) allBpms.shift();
-        updateStats();
-
-        const tbody = document.getElementById('rows');
-        const cat = bpmCat(bVal);
-        const tr = document.createElement('tr');
-        tr.className = 'row-new';
-        const now = new Date().toISOString();
-        tr.innerHTML = `<td>${fmtTime(now)}</td><td><span class="bpm-row-val ${cat}"><span class="bpm-row-dot"></span>${bVal}</span></td>`;
-        tbody.insertBefore(tr, tbody.firstChild);
-        if (tbody.rows.length > 50) tbody.deleteRow(tbody.rows.length - 1);
-        document.getElementById('latest-time').textContent = fmtTime(now);
-      }, 2800);
+      autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
     }
 
     function showError(msg) { const el = document.getElementById('err'); el.textContent = msg; el.hidden = !msg; }
 
-    async function fetchRecent() {
-      clearInterval(demoInterval); liveMode = false;
-      const key = document.getElementById('api-key').value || getSavedKey();
-      const headers = {}; if (key) headers['X-API-Key'] = key;
-      const res = await fetch('/api/heartbeat/recent?limit=80', { headers });
-      if (res.status === 401) {
-        document.getElementById('key-row').hidden = false;
-        document.getElementById('key-hint').hidden = false;
-        showError('需要有效的 X-API-Key。'); return;
+    async function fetchRecent(silent = false) {
+      const btn = document.getElementById('btn-refresh');
+      if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
+      try {
+        const res = await fetch('/api/heartbeat/recent?limit=80');
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
+        render(data.readings || [], data.latest);
+      } finally {
+        if (!silent) { btn.disabled = false; btn.textContent = '从服务器读取'; }
       }
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
-      render(data.readings || [], data.latest);
     }
 
-    function loadDemo() {
-      clearInterval(demoInterval); liveMode = false;
-      const now = Date.now();
-      const readings = [];
-      let b = 72;
-      for (let i = 29; i >= 0; i--) {
-        b = Math.max(52, Math.min(118, b + (Math.random() - 0.48) * 9));
-        readings.push({ time: new Date(now - i * 100000).toISOString(), bpm: Math.round(b) });
-      }
-      render(readings, readings[readings.length - 1]);
-      showError('');
-      startDemoLive();
-    }
-
-    /* main rAF loop */
+    /* ── main rAF loop ── */
     function loop(now) {
       requestAnimationFrame(loop);
-      const dt = now - lastFrameTs; lastFrameTs = now;
-      if (liveMode) {
-        currentBpm += (targetBpm - currentBpm) * 0.025;
-        bpmDriftTimer += dt;
-        if (bpmDriftTimer > 3200) {
-          bpmDriftTimer = 0;
-          targetBpm = Math.max(52, Math.min(118, targetBpm + (Math.random() - 0.48) * 12));
-        }
-        const v = Math.round(currentBpm);
-        if (v !== liveBpmDisplay) { liveBpmDisplay = v; document.getElementById('big-bpm').textContent = v; setPulseInterval(v); }
-        updateHeart(now);
-        updateEcgLive(now);
-      }
-      drawEcg();
+      if (!pageVisible) return;
+
+      /* heart pulses at actual BPM */
+      updateHeart(now);
     }
 
-    /* boot */
-    document.getElementById('btn-refresh').addEventListener('click', fetchRecent);
-    document.getElementById('btn-demo').addEventListener('click', loadDemo);
-    document.getElementById('btn-save-key').addEventListener('click', () => setSavedKey(document.getElementById('api-key').value.trim()));
-    document.getElementById('api-key').value = getSavedKey();
+    document.addEventListener('visibilitychange', () => { pageVisible = !document.hidden; });
+    document.getElementById('btn-refresh').addEventListener('click', () => fetchRecent(false));
     window.addEventListener('resize', initCanvas);
 
     initCanvas();
     requestAnimationFrame(loop);
-    fetchRecent().catch(() => { loadDemo(); showError('无法连接 API，已显示演示数据。'); });
+    fetchRecent(false).catch(() => { showError('无法连接 API。'); });
   })();
 </script>
 </body>
