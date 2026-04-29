@@ -15,7 +15,7 @@ Environment variables:
 import os
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from flask import Flask, jsonify, redirect, request, send_from_directory, url_for
@@ -204,6 +204,25 @@ def _parse_date(date_str: Any) -> int | None:
         return None
 
 
+def _parse_date_as_utc_day(date_str: Any) -> int | None:
+    """从日期字符串中提取 YYYY-MM-DD 部分，返回该日期的 UTC 零点 epoch。
+
+    忽略时间和时区偏移，使同一本地日期无论何时导出都映射到相同时间戳。
+    这解决了 UTC+8 等时区下早晨导出（本地日期 N，UTC 却是 N-1 日）导致的
+    同一天数据落在不同 UTC 日的问题。
+    """
+    if not date_str:
+        return None
+    s = str(date_str).strip()
+    if len(s) >= 10:
+        try:
+            dt = datetime.strptime(s[:10], "%Y-%m-%d")
+            return int(dt.replace(tzinfo=timezone.utc).timestamp())
+        except ValueError:
+            pass
+    return _parse_date(date_str)
+
+
 def _to_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -318,11 +337,15 @@ def _convert_metric(metric: dict[str, Any]) -> list[dict]:
     points: list[dict] = []
 
     for dp in metric.get("data", []):
-        ts = _parse_date(dp.get("date", ""))
+        date_str = dp.get("date", "")
+        if name in _DAILY_AGGREGATE_METRICS:
+            # 只取 YYYY-MM-DD 部分映射到 UTC 零点，避免时区偏移导致同一本地日期
+            # 在早晨/夜晚导出时落到不同 UTC 日而产生重复数据点
+            ts = _parse_date_as_utc_day(date_str)
+        else:
+            ts = _parse_date(date_str)
         if ts is None:
             continue
-        if name in _DAILY_AGGREGATE_METRICS:
-            ts = (ts // 86400) * 86400  # 归一化到当天 UTC 零点，利用 InfluxDB 原生覆盖
         source = dp.get("source", "Health Auto Export")
 
         if name == "sleep_analysis":
