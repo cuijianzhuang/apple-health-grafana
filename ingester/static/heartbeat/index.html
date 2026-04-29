@@ -283,6 +283,9 @@
 
 <script>
   (function () {
+    const RECENT_WINDOW_MINUTES = 6;
+    const RECENT_WINDOW_MS = RECENT_WINDOW_MINUTES * 60 * 1000;
+
     /* ── state ── */
     let displayedBpm = null;
     let currentBpm = 72;
@@ -443,44 +446,75 @@
       document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
     }
 
+    function resetStats() {
+      document.getElementById('stat-min').innerHTML = `—<span class="stat-unit">bpm</span>`;
+      document.getElementById('stat-avg').innerHTML = `—<span class="stat-unit">bpm</span>`;
+      document.getElementById('stat-max').innerHTML = `—<span class="stat-unit">bpm</span>`;
+    }
+
+    function filterRecentReadings(readings) {
+      const now = Date.now();
+      return [...readings]
+        .filter(r => !isNaN(new Date(r.time).getTime()))
+        .sort((a, b) => new Date(b.time) - new Date(a.time))
+        .filter(r => now - new Date(r.time).getTime() <= RECENT_WINDOW_MS);
+    }
+
     /* ── render real data ── */
     function render(readings, latest) {
       document.getElementById('err').hidden = true;
       clearInterval(autoRefreshTimer);
       clearInterval(relativeTimeInterval);
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = '';
 
       if (!readings.length) {
         animateBpm(null);
         document.getElementById('latest-time').textContent = '暂无心率记录';
+        latestTimeIso = null;
+        allBpms = [];
+        resetStats();
         sparklineValues = [];
-        document.getElementById('ecg-label').textContent = '心率趋势';
+        document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
         drawSparkline();
         return;
       }
 
-      const ordered = [...readings].sort((a, b) => new Date(b.time) - new Date(a.time));
-      const bpm = latest?.bpm ?? ordered[0]?.bpm;
+      const recentReadings = filterRecentReadings(readings);
+      if (!recentReadings.length) {
+        animateBpm(null);
+        document.getElementById('latest-time').textContent = `最近${RECENT_WINDOW_MINUTES}分钟无记录`;
+        latestTimeIso = null;
+        allBpms = [];
+        resetStats();
+        sparklineValues = [];
+        document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
+        drawSparkline();
+        autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
+        return;
+      }
+
+      const latestRecent = recentReadings[0];
+      const bpm = latestRecent?.bpm ?? latest?.bpm;
       currentBpm = Number(bpm) || 72;
       animateBpm(bpm);
       setPulseInterval(currentBpm);
 
-      latestTimeIso = latest?.time || ordered[0]?.time;
+      latestTimeIso = latestRecent?.time || latest?.time;
       document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
       relativeTimeInterval = setInterval(() => {
         document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
       }, 60000);
 
-      allBpms = readings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
+      allBpms = recentReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
       updateStats();
 
-      /* sparkline uses actual readings in chronological order */
-      sparklineValues = ordered.slice(0, 40).reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v));
-      document.getElementById('ecg-label').textContent = '心率趋势';
+      /* sparkline uses recent 6-minute readings in chronological order */
+      sparklineValues = recentReadings.slice().reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v));
+      document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
       drawSparkline();
 
-      const tbody = document.getElementById('rows');
-      tbody.innerHTML = '';
-      for (const r of ordered.slice(0, 50)) {
+      for (const r of recentReadings.slice(0, 50)) {
         const bVal = r.bpm != null ? Math.round(r.bpm) : null;
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
@@ -496,7 +530,7 @@
       const btn = document.getElementById('btn-refresh');
       if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
       try {
-        const res = await fetch('/api/heartbeat/recent?limit=80');
+        const res = await fetch('/api/heartbeat/recent?limit=200');
         const data = await res.json().catch(() => ({}));
         if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
         render(data.readings || [], data.latest);
