@@ -349,264 +349,304 @@
 <script>
     (function () {
         const RECENT_COUNT = 10;
-        const CAROUSEL_INTERVAL = 3000; // ms per record
 
-        let displayedBpm = null;
-        let currentBpm = 72;
-        let allBpms = [];
-        let allReadings = [];          // full 10-record array (newest first)
-        let carouselIndex = 0;         // which record is currently shown
-        let carouselTimer = null;
-        let sparklineValues = [];
-        let sparklineRenderValues = [];
-        let autoRefreshTimer = null;
+        /* ── state ── */
+        let allReadings   = [];   // newest-first, up to 10 records
+        let allBpms       = [];
+        let carouselIndex = 0;    // which record hero is currently showing
+        let currentBpm    = 72;   // bpm of the currently displayed record
+        let displayedBpm  = null;
+        let autoRefreshTimer   = null;
         let relativeTimeInterval = null;
         let latestTimeIso = null;
-        let pageVisible = true;
+        let pageVisible   = true;
 
+        /* ── canvas ── */
         const canvas = document.getElementById('ecg-canvas');
-        const ctx = canvas.getContext('2d');
-        let lastBeat = 0;
-        let heartScale = 1;
-        let heartPhase = 0;
+        const ctx    = canvas.getContext('2d');
+
+        /* ECG strip: a circular buffer of pixel-columns already drawn.
+           We maintain one offscreen ImageData that we shift left each beat,
+           then draw a fresh PQRST wave advancing from the right. */
+        let ecgBuf       = null;   // OffscreenCanvas or null
+        let ecgBufCtx    = null;
+        let ecgW = 0, ecgH = 0, ecgX0 = 0; // zone dimensions
+
+        /* Beat-phase tracking (rAF-driven) */
+        let lastBeatTime  = 0;     // rAF timestamp of last beat start
+        let beatProgress  = 0;     // 0..1 within current beat cycle
+        let heartScale    = 1;
+        let heartPhase    = 0;     // 0=idle 1=expand 2=contract
 
         function initCanvas() {
             const panel = canvas.parentElement;
-            canvas.width  = Math.max(panel.offsetWidth, 100);
-            canvas.height = Math.max(panel.offsetHeight, 100);
-            drawSparkline();
-        }
+            const w = Math.max(panel.offsetWidth, 100);
+            const h = Math.max(panel.offsetHeight, 100);
+            canvas.width  = w;
+            canvas.height = h;
 
-        function ecgZone() {
-            const w = canvas.width, h = canvas.height;
             const leftW = Math.round(w * 0.325);
-            const fadeW = 40;
-            return { w, h, x0: leftW, fadeX: leftW + fadeW };
+            ecgX0 = leftW;
+            ecgW  = w - leftW;
+            ecgH  = h;
+
+            // Re-create the offscreen strip buffer
+            try {
+                ecgBuf    = new OffscreenCanvas(ecgW, ecgH);
+                ecgBufCtx = ecgBuf.getContext('2d');
+            } catch (_) {
+                // Safari fallback: plain canvas
+                ecgBuf    = document.createElement('canvas');
+                ecgBuf.width  = ecgW;
+                ecgBuf.height = ecgH;
+                ecgBufCtx = ecgBuf.getContext('2d');
+            }
+            ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
+            beatProgress = 0;
         }
 
-        function pqrstShape(amplitude) {
-            const a = Math.max(0.15, Math.min(1, amplitude));
+        /* ── PQRST wave shape ── */
+        /* Returns array of [t, y_normalised] knots. t ∈ [0,1], y ∈ [-1,1] (up = positive) */
+        function pqrstKnots(amp) {
+            const a = Math.max(0.15, Math.min(1, amp));
             return [
                 [0.00,  0.00],
-                [0.12,  0.00],
-                [0.18,  0.08 * a],
-                [0.24,  0.00],
-                [0.30, -0.10 * a],
-                [0.38,  1.00 * a],
-                [0.44, -0.15 * a],
-                [0.52,  0.00],
-                [0.62,  0.00],
-                [0.72,  0.28 * a],
+                [0.10,  0.00],
+                [0.16,  0.10 * a],  // P up
+                [0.22,  0.00],
+                [0.28, -0.12 * a],  // Q dip
+                [0.35,  1.00 * a],  // R peak
+                [0.42, -0.18 * a],  // S dip
+                [0.50,  0.00],
+                [0.60,  0.00],
+                [0.70,  0.30 * a],  // T wave
                 [0.82,  0.00],
                 [1.00,  0.00],
             ];
         }
 
-        function evalPQRST(shape, t) {
-            for (let i = 1; i < shape.length; i++) {
-                if (t <= shape[i][0]) {
-                    const t0 = shape[i-1][0], t1 = shape[i][0];
-                    const y0 = shape[i-1][1], y1 = shape[i][1];
-                    const f = (t1 === t0) ? 0 : (t - t0) / (t1 - t0);
+        function evalKnots(knots, t) {
+            for (let i = 1; i < knots.length; i++) {
+                if (t <= knots[i][0]) {
+                    const [t0, y0] = knots[i - 1];
+                    const [t1, y1] = knots[i];
+                    const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
                     return y0 + (y1 - y0) * f;
                 }
             }
             return 0;
         }
 
-        function bpmToAmplitude(bpm) {
+        function bpmToAmp(bpm) {
             return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
         }
 
-        let ecgScanPos = 0;
-        let ecgScanSpeed = 0;
-        let ecgLastTs = null;
-
-        function updateEcgSpeed() {
-            ecgScanSpeed = currentBpm / 60000;
-        }
-
-        function drawSparkline() {
-            const { w, h, x0, fadeX } = ecgZone();
-            ctx.clearRect(0, 0, w, h);
-            if (!sparklineRenderValues.length) return;
-
-            const vals = sparklineRenderValues;
-            const n = vals.length;
-
-            // Grid lines
-            ctx.save();
-            ctx.strokeStyle = 'rgba(255,80,110,0.07)';
-            ctx.lineWidth = 0.5;
-            ctx.setLineDash([3, 5]);
+        /* ── Draw ECG grid onto a context ── */
+        function drawGrid(c, w, h) {
+            c.save();
+            c.strokeStyle = 'rgba(255,80,110,0.07)';
+            c.lineWidth = 0.5;
+            c.setLineDash([3, 5]);
             const cols = 8, rows = 4;
-            const zoneW = w - x0;
-            for (let c = 0; c <= cols; c++) {
-                const x = x0 + (c / cols) * zoneW;
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            for (let i = 0; i <= cols; i++) {
+                const x = (i / cols) * w;
+                c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
             }
-            for (let r = 1; r < rows; r++) {
-                const y = (r / rows) * h;
-                ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(w, y); ctx.stroke();
+            for (let i = 1; i < rows; i++) {
+                const y = (i / rows) * h;
+                c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke();
             }
-            ctx.setLineDash([]);
-            ctx.restore();
+            c.setLineDash([]);
+            c.restore();
+        }
 
-            const baseline = h * 0.62;
-            const maxAmp   = h * 0.42;
-            const complexW = (w - x0 - 8) / n;
-            const SAMPLES  = 60;
+        /* ── Advance the ECG strip by one beat ──
+           Shifts the buffer left by complexW pixels, then draws a new PQRST
+           wave into the right portion, animated over the beat duration.
+           Called every rAF; progress 0..1 is the beat phase. */
+        function updateEcgStrip(progress, bpm) {
+            if (!ecgBufCtx || ecgW <= 0) return;
 
-            function complexPt(i, t) {
-                const shape = pqrstShape(bpmToAmplitude(vals[i]));
-                return {
-                    x: x0 + i * complexW + t * complexW,
-                    y: baseline - evalPQRST(shape, t) * maxAmp,
-                };
-            }
+            /* How wide is one beat's worth of pixels?
+               We show ~8 beats across the strip. */
+            const beatsVisible = 8;
+            const complexW = ecgW / beatsVisible;
 
-            // Area fill
-            const areaGrad = ctx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.25);
-            areaGrad.addColorStop(0,   'rgba(255,61,90,0.15)');
-            areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.06)');
-            areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
-
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(x0, 0, w - x0, h);
-            ctx.clip();
-            ctx.beginPath();
-            let first = true;
-            for (let i = 0; i < n; i++) {
-                for (let s = 0; s <= SAMPLES; s++) {
-                    const pt = complexPt(i, s / SAMPLES);
-                    if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
-                    else ctx.lineTo(pt.x, pt.y);
+            /* On a fresh beat (progress near 0 from previous >0.95):
+               shift the buffer left by complexW pixels. */
+            if (progress === 0) {
+                // Shift left
+                const img = ecgBufCtx.getImageData(Math.round(complexW), 0,
+                    ecgW - Math.round(complexW), ecgH);
+                ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
+                ecgBufCtx.putImageData(img, 0, 0);
+                // Redraw grid over cleared right portion
+                ecgBufCtx.save();
+                ecgBufCtx.strokeStyle = 'rgba(255,80,110,0.07)';
+                ecgBufCtx.lineWidth = 0.5;
+                ecgBufCtx.setLineDash([3, 5]);
+                const cols = 8, rows = 4;
+                for (let i = 0; i <= cols; i++) {
+                    const x = (i / cols) * ecgW;
+                    if (x < ecgW - complexW - 2) continue;
+                    ecgBufCtx.beginPath(); ecgBufCtx.moveTo(x, 0); ecgBufCtx.lineTo(x, ecgH); ecgBufCtx.stroke();
                 }
-            }
-            ctx.lineTo(complexPt(n - 1, 1).x, baseline);
-            ctx.lineTo(complexPt(0, 0).x, baseline);
-            ctx.closePath();
-            ctx.fillStyle = areaGrad;
-            ctx.fill();
-            ctx.restore();
-
-            // Waveform line
-            const lineGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
-            lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
-            lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
-
-            ctx.save();
-            ctx.beginPath();
-            first = true;
-            for (let i = 0; i < n; i++) {
-                for (let s = 0; s <= SAMPLES; s++) {
-                    const pt = complexPt(i, s / SAMPLES);
-                    if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
-                    else ctx.lineTo(pt.x, pt.y);
+                for (let i = 1; i < 4; i++) {
+                    const y = (i / 4) * ecgH;
+                    ecgBufCtx.beginPath(); ecgBufCtx.moveTo(ecgW - complexW, y); ecgBufCtx.lineTo(ecgW, y); ecgBufCtx.stroke();
                 }
+                ecgBufCtx.setLineDash([]);
+                ecgBufCtx.restore();
             }
-            ctx.strokeStyle = lineGrad;
-            ctx.lineWidth = 2;
-            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-            ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-            ctx.restore();
 
-            // Scanning cursor
-            const scanX = x0 + (ecgScanPos / n) * (w - x0 - 8);
-            if (scanX > fadeX && scanX < w - 2) {
-                const sweepGrad = ctx.createLinearGradient(scanX - 18, 0, scanX + 6, 0);
-                sweepGrad.addColorStop(0,   'rgba(255,61,90,0)');
-                sweepGrad.addColorStop(0.7, 'rgba(255,100,130,0.22)');
-                sweepGrad.addColorStop(1,   'rgba(255,200,220,0.7)');
-                ctx.save();
-                ctx.fillStyle = sweepGrad;
-                ctx.fillRect(scanX - 18, 0, 24, h);
-                ctx.restore();
+            /* Draw the PQRST wave up to current progress into the right slot */
+            const baseline  = ecgH * 0.62;
+            const maxAmp    = ecgH * 0.40;
+            const slotX     = ecgW - complexW;  // left edge of current beat slot
+            const knots     = pqrstKnots(bpmToAmp(bpm));
+            const STEPS     = 80;
+            const stepsNow  = Math.floor(progress * STEPS);
 
-                const scanI = Math.floor(ecgScanPos);
-                const scanT = ecgScanPos - scanI;
-                if (scanI < n) {
-                    const dot = complexPt(Math.min(scanI, n - 1), Math.min(scanT, 1));
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(dot.x, dot.y, 4.5, 0, Math.PI * 2);
-                    ctx.fillStyle = 'rgba(255,61,90,0.25)';
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.arc(dot.x, dot.y, 2.8, 0, Math.PI * 2);
-                    ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
-                    ctx.fillStyle = '#fff'; ctx.fill();
-                    ctx.shadowBlur = 0;
-                    ctx.restore();
+            /* Clear just the current slot and redraw what we have so far */
+            ecgBufCtx.save();
+            ecgBufCtx.clearRect(slotX, 0, complexW + 1, ecgH);
+
+            // grid in slot
+            ecgBufCtx.strokeStyle = 'rgba(255,80,110,0.07)';
+            ecgBufCtx.lineWidth = 0.5;
+            ecgBufCtx.setLineDash([3, 5]);
+            for (let i = 1; i < 4; i++) {
+                const y = (i / 4) * ecgH;
+                ecgBufCtx.beginPath(); ecgBufCtx.moveTo(slotX, y); ecgBufCtx.lineTo(slotX + complexW, y); ecgBufCtx.stroke();
+            }
+            ecgBufCtx.setLineDash([]);
+
+            if (stepsNow > 0) {
+                // area fill under the waveform in this slot
+                const areaGrad = ecgBufCtx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.3);
+                areaGrad.addColorStop(0,   'rgba(255,61,90,0.14)');
+                areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.05)');
+                areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
+
+                ecgBufCtx.beginPath();
+                let fx = slotX + 0 * complexW;
+                let fy = baseline - evalKnots(knots, 0) * maxAmp;
+                ecgBufCtx.moveTo(fx, fy);
+                for (let s = 1; s <= stepsNow; s++) {
+                    const t  = s / STEPS;
+                    const x  = slotX + t * complexW;
+                    const y  = baseline - evalKnots(knots, t) * maxAmp;
+                    ecgBufCtx.lineTo(x, y);
                 }
-            }
+                const lastT = stepsNow / STEPS;
+                const lastX = slotX + lastT * complexW;
+                ecgBufCtx.lineTo(lastX, baseline);
+                ecgBufCtx.lineTo(slotX, baseline);
+                ecgBufCtx.closePath();
+                ecgBufCtx.fillStyle = areaGrad;
+                ecgBufCtx.fill();
 
-            // BPM labels above R-peak
-            ctx.save();
-            ctx.font = '400 9.5px "JetBrains Mono", monospace';
-            ctx.textAlign = 'center';
-            for (let i = 0; i < n; i++) {
-                const pt = complexPt(i, 0.38);
-                if (pt.x < fadeX + 10) continue;
-                ctx.fillStyle = (i === n - 1) ? 'rgba(255,255,255,0.88)' : 'rgba(255,143,163,0.55)';
-                ctx.fillText(String(Math.round(vals[i])), pt.x, pt.y - 9);
-            }
-            ctx.restore();
+                // waveform line
+                ecgBufCtx.beginPath();
+                ecgBufCtx.moveTo(slotX + 0, baseline - evalKnots(knots, 0) * maxAmp);
+                for (let s = 1; s <= stepsNow; s++) {
+                    const t = s / STEPS;
+                    ecgBufCtx.lineTo(slotX + t * complexW,
+                        baseline - evalKnots(knots, t) * maxAmp);
+                }
+                ecgBufCtx.strokeStyle = '#ff3d5a';
+                ecgBufCtx.lineWidth = 2;
+                ecgBufCtx.lineJoin = 'round'; ecgBufCtx.lineCap = 'round';
+                ecgBufCtx.shadowColor = '#ff3d5a'; ecgBufCtx.shadowBlur = 9;
+                ecgBufCtx.stroke();
+                ecgBufCtx.shadowBlur = 0;
 
-            // Left fade mask
-            const leftMask = ctx.createLinearGradient(x0, 0, fadeX, 0);
-            leftMask.addColorStop(0, 'rgba(14,18,26,1)');
-            leftMask.addColorStop(1, 'rgba(14,18,26,0)');
+                // cursor dot at leading edge
+                const dotT = stepsNow / STEPS;
+                const dotX = slotX + dotT * complexW;
+                const dotY = baseline - evalKnots(knots, dotT) * maxAmp;
+                ecgBufCtx.beginPath();
+                ecgBufCtx.arc(dotX, dotY, 4.5, 0, Math.PI * 2);
+                ecgBufCtx.fillStyle = 'rgba(255,61,90,0.22)';
+                ecgBufCtx.fill();
+                ecgBufCtx.beginPath();
+                ecgBufCtx.arc(dotX, dotY, 2.6, 0, Math.PI * 2);
+                ecgBufCtx.fillStyle = '#fff';
+                ecgBufCtx.shadowColor = '#fff'; ecgBufCtx.shadowBlur = 10;
+                ecgBufCtx.fill();
+                ecgBufCtx.shadowBlur = 0;
+            }
+            ecgBufCtx.restore();
+        }
+
+        /* ── Composite: blit buffer onto main canvas ── */
+        function drawFrame(progress, bpm) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!ecgBufCtx) return;
+
+            updateEcgStrip(progress, bpm);
+
+            // Blit buffer starting at ecgX0
             ctx.save();
-            ctx.fillStyle = leftMask;
-            ctx.fillRect(x0, 0, fadeX - x0 + 2, h);
+            ctx.drawImage(ecgBuf, ecgX0, 0);
+
+            // Left fade mask (blends ECG into hero-left panel)
+            const fadeW = 48;
+            const mask  = ctx.createLinearGradient(ecgX0, 0, ecgX0 + fadeW, 0);
+            mask.addColorStop(0, 'rgba(14,18,26,1)');
+            mask.addColorStop(1, 'rgba(14,18,26,0)');
+            ctx.fillStyle = mask;
+            ctx.fillRect(ecgX0, 0, fadeW + 2, canvas.height);
+
+            // Sweep glow just ahead of cursor
+            const beatsVisible = 8;
+            const complexW = ecgW / beatsVisible;
+            const cursorX  = ecgX0 + ecgW - complexW * (1 - progress);
+            const sweepGrad = ctx.createLinearGradient(cursorX - 22, 0, cursorX + 8, 0);
+            sweepGrad.addColorStop(0, 'rgba(255,61,90,0)');
+            sweepGrad.addColorStop(0.6, 'rgba(255,90,120,0.18)');
+            sweepGrad.addColorStop(1, 'rgba(255,200,220,0.55)');
+            ctx.fillStyle = sweepGrad;
+            ctx.fillRect(cursorX - 22, 0, 30, canvas.height);
+
             ctx.restore();
         }
 
-        function syncSparklineTargets(newVals) {
-            const next = newVals.slice(0, RECENT_COUNT);
-            if (sparklineRenderValues.length !== next.length) {
-                sparklineRenderValues = next.slice();
-            }
-            sparklineValues = next;
-        }
-
-        function animateSparklineFollow() {
-            if (!sparklineValues.length || sparklineValues.length !== sparklineRenderValues.length) return;
-            for (let i = 0; i < sparklineRenderValues.length; i++) {
-                const diff = sparklineValues[i] - sparklineRenderValues[i];
-                sparklineRenderValues[i] += Math.abs(diff) > 0.05 ? diff * 0.07 : diff;
-            }
-        }
-
+        /* ── Heart beat animation ── */
         function updateHeart(now) {
-            const beatMs = Math.round(60000 / currentBpm);
-            if (now - lastBeat >= beatMs) { lastBeat = now; heartPhase = 1; }
-            if      (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
-            else if (heartPhase === 2) { heartScale = Math.max(1.0,  heartScale - 0.007); if (heartScale <= 1.0)  heartPhase = 0; }
+            const beatMs = 60000 / currentBpm;
+            const phase  = ((now - lastBeatTime) % beatMs) / beatMs; // 0..1 within beat
+
+            // expand quickly at start of beat, contract slowly
+            if (phase < 0.12) {
+                heartScale = 1 + (phase / 0.12) * 0.13;
+            } else if (phase < 0.35) {
+                heartScale = 1.13 - ((phase - 0.12) / 0.23) * 0.13;
+            } else {
+                heartScale = 1;
+            }
 
             const cx = 50, cy = 48;
-            const t = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
-            document.getElementById('heart-path').setAttribute('transform', t);
+            const tf = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
+            document.getElementById('heart-path').setAttribute('transform', tf);
             const halo = document.getElementById('halo');
-            halo.setAttribute('transform', t);
-            halo.setAttribute('opacity', (0.3 + (heartScale - 1) * 3.5).toFixed(3));
+            halo.setAttribute('transform', tf);
+            halo.setAttribute('opacity', (0.3 + (heartScale - 1) * 4).toFixed(3));
             document.getElementById('heart-svg-el').style.filter =
-                `drop-shadow(0 0 ${Math.round((heartScale - 1) * 160)}px rgba(255,61,90,0.65))`;
+                `drop-shadow(0 0 ${Math.round((heartScale - 1) * 180)}px rgba(255,61,90,0.7))`;
         }
 
         function setPulseInterval(bpm) {
             document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
         }
 
+        /* ── BPM number roll animation ── */
         function animateBpm(target) {
             const node = document.getElementById('big-bpm');
             if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
-            const goal = Math.round(target), start = displayedBpm == null ? goal : displayedBpm;
-            const dur = 700, t0 = performance.now();
+            const goal  = Math.round(target);
+            const start = displayedBpm == null ? goal : displayedBpm;
+            const dur   = 500, t0 = performance.now();
             function step(ts) {
                 const p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
                 node.textContent = String(Math.round(start + (goal - start) * e));
@@ -615,11 +655,57 @@
             requestAnimationFrame(step);
         }
 
+        /* ── Carousel: show record at idx in hero ── */
+        function showCarouselItem(idx, animate = true) {
+            if (!allReadings.length) return;
+            idx = ((idx % allReadings.length) + allReadings.length) % allReadings.length;
+            carouselIndex = idx;
+            const r   = allReadings[idx];
+            const bpm = Number(r.bpm) || 72;
+
+            currentBpm    = bpm;
+            latestTimeIso = r.time;
+
+            const bpmEl  = document.getElementById('big-bpm');
+            const timeEl = document.getElementById('latest-time');
+            const idxEl  = document.getElementById('carousel-index');
+
+            if (animate) {
+                bpmEl.classList.add('fade-swap');
+                timeEl.classList.add('fade-swap');
+                setTimeout(() => {
+                    animateBpm(bpm);
+                    setPulseInterval(bpm);
+                    timeEl.textContent = fmtRelativeTime(latestTimeIso);
+                    idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
+                    bpmEl.classList.remove('fade-swap');
+                    timeEl.classList.remove('fade-swap');
+                }, 160);
+            } else {
+                animateBpm(bpm);
+                setPulseInterval(bpm);
+                timeEl.textContent = fmtRelativeTime(latestTimeIso);
+                idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
+            }
+
+            document.querySelectorAll('#rows tr').forEach((tr, i) => {
+                tr.classList.toggle('row-active', i === idx);
+            });
+            const active = document.querySelector('#rows tr.row-active');
+            if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+            document.querySelectorAll('.carousel-dot').forEach((d, i) => {
+                d.classList.toggle('active', i === idx);
+            });
+        }
+
+        /* ── Helpers ── */
         function fmtTime(iso) {
             if (!iso) return '—';
             const d = new Date(iso);
             if (isNaN(d)) return iso;
-            return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit',
+                hour:'2-digit', minute:'2-digit', second:'2-digit' });
         }
 
         function fmtRelativeTime(iso) {
@@ -662,150 +748,74 @@
                 .slice(0, RECENT_COUNT);
         }
 
-        /* ── Carousel: cycle through allReadings one by one ── */
-        function startCarousel() {
-            clearInterval(carouselTimer);
-            if (allReadings.length < 2) return;
-            carouselTimer = setInterval(() => {
-                carouselIndex = (carouselIndex + 1) % allReadings.length;
-                showCarouselItem(carouselIndex);
-            }, CAROUSEL_INTERVAL);
-        }
-
-        function showCarouselItem(idx) {
-            const r = allReadings[idx];
-            if (!r) return;
-            const bpm = Number(r.bpm);
-
-            // Fade hero content
-            const bpmEl   = document.getElementById('big-bpm');
-            const timeEl  = document.getElementById('latest-time');
-            const idxEl   = document.getElementById('carousel-index');
-            bpmEl.classList.add('fade-swap');
-            timeEl.classList.add('fade-swap');
-            setTimeout(() => {
-                currentBpm = bpm || 72;
-                animateBpm(bpm);
-                setPulseInterval(currentBpm);
-                latestTimeIso = r.time;
-                timeEl.textContent = fmtRelativeTime(latestTimeIso);
-                idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
-                bpmEl.classList.remove('fade-swap');
-                timeEl.classList.remove('fade-swap');
-            }, 200);
-
-            // Highlight table row
-            document.querySelectorAll('#rows tr').forEach((tr, i) => {
-                tr.classList.toggle('row-active', i === idx);
-            });
-
-            // Scroll highlighted row into view
-            const activeRow = document.querySelector('#rows tr.row-active');
-            if (activeRow) activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-
-            // Update dot indicators
-            document.querySelectorAll('.carousel-dot').forEach((d, i) => {
-                d.classList.toggle('active', i === idx);
-            });
-        }
-
+        /* ── Render data ── */
         function render(readings, latest) {
             document.getElementById('err').hidden = true;
             clearInterval(autoRefreshTimer);
             clearInterval(relativeTimeInterval);
-            clearInterval(carouselTimer);
             document.getElementById('rows').innerHTML = '';
 
-            const recentReadings = readings.length ? pickRecentReadings(readings) : [];
+            const recent = readings.length ? pickRecentReadings(readings) : [];
 
-            if (!recentReadings.length) {
+            if (!recent.length) {
                 animateBpm(null);
-                document.getElementById('latest-time').textContent = readings.length ? `暂无最近${RECENT_COUNT}条记录` : '暂无心率记录';
-                latestTimeIso = null;
-                allBpms = [];
-                allReadings = [];
-                resetStats();
-                sparklineValues = [];
-                sparklineRenderValues = [];
-                document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
-                document.getElementById('carousel-dots').innerHTML = '';
+                document.getElementById('latest-time').textContent = '暂无心率记录';
                 document.getElementById('carousel-index').textContent = '';
-                drawSparkline();
+                document.getElementById('carousel-dots').innerHTML = '';
+                document.getElementById('ecg-label').textContent = '心率趋势';
+                allReadings = []; allBpms = [];
+                resetStats();
                 if (readings.length) autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
                 return;
             }
 
-            allReadings = recentReadings;
-            carouselIndex = 0;
-
-            const first = allReadings[0];
-            const bpm = Number(first?.bpm ?? latest?.bpm);
-            currentBpm = bpm || 72;
-            animateBpm(bpm);
-            setPulseInterval(currentBpm);
-
-            latestTimeIso = first?.time || latest?.time;
-            document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
-            document.getElementById('carousel-index').textContent = `1 / ${allReadings.length}`;
-
-            relativeTimeInterval = setInterval(() => {
-                document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
-            }, 60000);
-
-            allBpms = allReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
+            allReadings = recent;
+            allBpms     = allReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
             updateStats();
 
-            // ECG uses up to RECENT_COUNT readings in chrono order
-            syncSparklineTargets([...allReadings].reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v)));
-            document.getElementById('ecg-label').textContent = `最近${allReadings.length}条趋势`;
-            drawSparkline();
+            document.getElementById('ecg-label').textContent = `最近 ${allReadings.length} 条`;
 
-            // Build dot indicators
+            // Carousel dots
             const dotsEl = document.getElementById('carousel-dots');
             dotsEl.innerHTML = '';
             allReadings.forEach((_, i) => {
                 const d = document.createElement('span');
                 d.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-                d.addEventListener('click', () => {
-                    clearInterval(carouselTimer);
-                    carouselIndex = i;
-                    showCarouselItem(i);
-                    startCarousel();
-                });
+                d.addEventListener('click', () => { carouselIndex = i; showCarouselItem(i); });
                 dotsEl.appendChild(d);
             });
 
-            // Build table rows
+            // Table rows
             const tbody = document.getElementById('rows');
             allReadings.forEach((r, i) => {
                 const bVal = r.bpm != null ? Math.round(r.bpm) : null;
-                const tr = document.createElement('tr');
+                const tr   = document.createElement('tr');
                 if (i === 0) tr.classList.add('row-active');
                 tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
-                tr.addEventListener('click', () => {
-                    clearInterval(carouselTimer);
-                    carouselIndex = i;
-                    showCarouselItem(i);
-                    startCarousel();
-                });
+                tr.addEventListener('click', () => { carouselIndex = i; showCarouselItem(i); });
                 tbody.appendChild(tr);
             });
 
-            startCarousel();
+            carouselIndex = 0;
+            showCarouselItem(0, false);
+
+            relativeTimeInterval = setInterval(() => {
+                document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+            }, 60000);
+
             autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
         }
 
         function showError(msg) {
             const el = document.getElementById('err');
-            el.textContent = msg;
-            el.hidden = !msg;
+            el.textContent = msg; el.hidden = !msg;
         }
 
         async function fetchRecent(silent = false) {
             const btn = document.getElementById('btn-refresh');
             if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
             try {
-                const res = await fetch('/api/heartbeat/recent?limit=10');
+                const res  = await fetch('/api/heartbeat/recent?limit=10');
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
                 render(data.readings || [], data.latest);
@@ -814,27 +824,46 @@
             }
         }
 
+        /* ── Main rAF loop ── */
+        let lastRafNow = null;
+        let prevBeatPhase = 0;
+
         function loop(now) {
             requestAnimationFrame(loop);
             if (!pageVisible) return;
+            if (lastRafNow === null) { lastRafNow = now; lastBeatTime = now; }
+            lastRafNow = now;
 
-            if (ecgLastTs === null) ecgLastTs = now;
-            const dt = now - ecgLastTs;
-            ecgLastTs = now;
+            if (!allReadings.length) return;
 
-            if (sparklineRenderValues.length) {
-                updateEcgSpeed();
-                ecgScanPos = (ecgScanPos + ecgScanSpeed * dt) % RECENT_COUNT;
-                animateSparklineFollow();
-                drawSparkline(now);
+            const beatMs    = 60000 / currentBpm;
+            const elapsed   = now - lastBeatTime;
+            const beatPhase = (elapsed % beatMs) / beatMs; // 0..1
+
+            // Detect beat boundary (phase wrapped from ~1 back to ~0)
+            const newBeat = beatPhase < prevBeatPhase && prevBeatPhase > 0.85;
+            prevBeatPhase = beatPhase;
+
+            if (newBeat) {
+                // Advance carousel to next record on each heartbeat
+                lastBeatTime  = now - (elapsed % beatMs); // re-anchor
+                const nextIdx = (carouselIndex + 1) % allReadings.length;
+                showCarouselItem(nextIdx);
+                // Pass progress=0 to trigger strip shift
+                drawFrame(0, currentBpm);
+            } else {
+                drawFrame(beatPhase, currentBpm);
             }
 
             updateHeart(now);
         }
 
-        document.addEventListener('visibilitychange', () => { pageVisible = !document.hidden; });
+        document.addEventListener('visibilitychange', () => {
+            pageVisible = !document.hidden;
+            if (pageVisible) { lastBeatTime = performance.now(); prevBeatPhase = 0; }
+        });
         document.getElementById('btn-refresh').addEventListener('click', () => fetchRecent(false));
-        window.addEventListener('resize', initCanvas);
+        window.addEventListener('resize', () => { initCanvas(); });
 
         initCanvas();
         requestAnimationFrame(loop);
