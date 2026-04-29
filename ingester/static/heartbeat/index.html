@@ -311,187 +311,252 @@
       drawSparkline();
     }
 
-    /* ── shared canvas helpers ── */
-    function canvasLayout() {
+    /* ─────────────────────────────────────────────────────────────────
+       ECG WAVEFORM ENGINE
+       Each BPM reading maps to one PQRST complex.
+       The 6 readings scroll left as a continuous ECG strip.
+       Amplitude of QRS peak scales with BPM (higher BPM → taller spike).
+       On data refresh the amplitudes lerp smoothly to their new targets.
+    ──────────────────────────────────────────────────────────────────── */
+
+    /* ECG zone: starts where hero-left panel ends */
+    function ecgZone() {
       const w = canvas.width, h = canvas.height;
-      const startX = Math.round(w * 0.20);
-      const fadeEnd = Math.round(w * 0.33);
-      return { w, h, startX, fadeEnd };
+      const leftW = Math.round(w * 0.325); // mirror of .hero-left width ratio
+      const fadeW = 40;                    // gradient fade-in over this many px
+      return { w, h, x0: leftW, fadeX: leftW + fadeW };
     }
 
-    function drawSharedDecor(fadeEnd, w, h) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.035)';
-      ctx.lineWidth = 0.5;
-      [0.25, 0.5, 0.75].forEach(f => {
-        ctx.beginPath(); ctx.moveTo(fadeEnd, h * f); ctx.lineTo(w, h * f); ctx.stroke();
-      });
+    /* Generate one normalised PQRST complex as array of [t, y] pairs, t ∈ [0,1].
+       amplitude: 0–1 (1 = max height). Returns points in ECG strip space. */
+    function pqrstShape(amplitude) {
+      const a = Math.max(0.15, Math.min(1, amplitude));
+      // Each segment: [t_end, y] — y is normalised deviation from baseline (-1..+1)
+      // Baseline = 0, upward = positive
+      return [
+        [0.00,  0.00],   // start baseline
+        [0.12,  0.00],   // flat before P
+        [0.18,  0.08 * a], // P-wave up
+        [0.24,  0.00],   // back to baseline (Q trough start)
+        [0.30, -0.10 * a], // Q dip
+        [0.38,  1.00 * a], // R peak  ← tallest point, driven by amplitude
+        [0.44, -0.15 * a], // S dip
+        [0.52,  0.00],   // baseline return
+        [0.62,  0.00],   // flat before T
+        [0.72,  0.28 * a], // T-wave up
+        [0.82,  0.00],   // T-wave down
+        [1.00,  0.00],   // trailing baseline
+      ];
     }
 
-    /* ── Catmull-Rom spline helpers ── */
-    function catmullRomPoints(pts) {
-      // Returns array of {x,y} sampled along the Catmull-Rom spline at uniform t steps
-      if (pts.length < 2) return pts;
-      const result = [];
-      const n = pts.length;
-      const steps = 40; // samples between each pair of control points
-      for (let seg = 0; seg < n - 1; seg++) {
-        const p0 = pts[Math.max(seg - 1, 0)];
-        const p1 = pts[seg];
-        const p2 = pts[seg + 1];
-        const p3 = pts[Math.min(seg + 2, n - 1)];
-        for (let s = 0; s <= steps; s++) {
-          const t = s / steps;
-          const t2 = t * t, t3 = t2 * t;
-          const x = 0.5 * ((2*p1.x) + (-p0.x+p2.x)*t + (2*p0.x-5*p1.x+4*p2.x-p3.x)*t2 + (-p0.x+3*p1.x-3*p2.x+p3.x)*t3);
-          const y = 0.5 * ((2*p1.y) + (-p0.y+p2.y)*t + (2*p0.y-5*p1.y+4*p2.y-p3.y)*t2 + (-p0.y+3*p1.y-3*p2.y+p3.y)*t3);
-          result.push({x, y});
+    /* Evaluate pqrst shape at arbitrary t ∈ [0,1] via linear interp */
+    function evalPQRST(shape, t) {
+      for (let i = 1; i < shape.length; i++) {
+        if (t <= shape[i][0]) {
+          const t0 = shape[i-1][0], t1 = shape[i][0];
+          const y0 = shape[i-1][1], y1 = shape[i][1];
+          const f = (t1 === t0) ? 0 : (t - t0) / (t1 - t0);
+          return y0 + (y1 - y0) * f;
         }
       }
-      return result;
+      return 0;
     }
 
-    function buildSplinePath(pts, ctx) {
-      // Stroke a Catmull-Rom spline through pts[] ({x,y} array)
-      const curve = catmullRomPoints(pts);
-      if (!curve.length) return curve;
-      ctx.moveTo(curve[0].x, curve[0].y);
-      for (let i = 1; i < curve.length; i++) ctx.lineTo(curve[i].x, curve[i].y);
-      return curve;
+    /* Convert normalised BPM to amplitude: 60→0.45, 100→0.85, 140→1.0 */
+    function bpmToAmplitude(bpm) {
+      return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
     }
 
-    /* ── real-data sparkline (actual BPM trend, Catmull-Rom smooth) ── */
-    function drawSparkline(animMs = 0) {
-      const { w, h, startX, fadeEnd } = canvasLayout();
+    /* ECG scan state */
+    let ecgScanPos = 0;      // current scan position in [0, RECENT_COUNT) complex-space
+    let ecgScanSpeed = 0;    // complexes per ms, updated from currentBpm
+    let ecgLastTs = null;
+
+    function updateEcgSpeed() {
+      // one full complex = one heartbeat = 60000/bpm ms
+      ecgScanSpeed = currentBpm / 60000; // complexes per ms
+    }
+
+    /* Main ECG draw — called every rAF */
+    function drawSparkline(now = 0) {
+      const { w, h, x0, fadeX } = ecgZone();
       ctx.clearRect(0, 0, w, h);
+
       if (!sparklineRenderValues.length) return;
 
-      const vals = sparklineRenderValues;
-      const vmin = Math.min(...vals), vmax = Math.max(...vals);
-      const span = Math.max(vmax - vmin, 10);
-      const pad = 0.18;
+      const vals = sparklineRenderValues;  // length = RECENT_COUNT (6)
       const n = vals.length;
-      const toX = i => startX + (i / Math.max(n - 1, 1)) * (w - startX - 8);
-      const toY = v => h * (1 - pad - ((v - vmin) / span) * (1 - pad * 2));
 
-      const pts = vals.map((v, i) => ({ x: toX(i), y: toY(v) }));
-
-      /* ── area fill (clipped to right of fade) ── */
-      const curve = catmullRomPoints(pts);
-      const vertGrad = ctx.createLinearGradient(0, 0, 0, h);
-      vertGrad.addColorStop(0, 'rgba(255,61,90,0.20)');
-      vertGrad.addColorStop(1, 'rgba(255,61,90,0)');
+      /* grid lines */
       ctx.save();
-      ctx.rect(fadeEnd, 0, w - fadeEnd, h); ctx.clip();
-      ctx.beginPath();
-      ctx.moveTo(curve[0].x, curve[0].y);
-      for (let i = 1; i < curve.length; i++) ctx.lineTo(curve[i].x, curve[i].y);
-      ctx.lineTo(curve[curve.length-1].x, h);
-      ctx.lineTo(curve[0].x, h);
-      ctx.closePath();
-      ctx.fillStyle = vertGrad; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,80,110,0.07)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 5]);
+      const cols = 8, rows = 4;
+      const zoneW = w - x0;
+      for (let c = 0; c <= cols; c++) {
+        const x = x0 + (c / cols) * zoneW;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let r = 1; r < rows; r++) {
+        const y = (r / rows) * h;
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      ctx.setLineDash([]);
       ctx.restore();
 
-      drawSharedDecor(fadeEnd, w, h);
+      /* baseline */
+      const baseline = h * 0.62;
+      const maxAmp   = h * 0.42;  // max upward excursion in px
 
-      /* ── main line with left-edge fade ── */
-      const lineGrad = ctx.createLinearGradient(startX, 0, fadeEnd + 40, 0);
-      lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
-      lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(curve[0].x, curve[0].y);
-      for (let i = 1; i < curve.length; i++) ctx.lineTo(curve[i].x, curve[i].y);
-      ctx.strokeStyle = lineGrad;
-      ctx.lineWidth = 2.2;
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 10;
-      ctx.stroke(); ctx.shadowBlur = 0; ctx.restore();
+      /* Complex width in px: distribute n complexes across the zone */
+      const complexW = (w - x0 - 8) / n;
 
-      /* ── scan-dot: rides along the actual spline curve ── */
-      if (curve.length > 1 && animMs > 0) {
-        const hiProgress = (animMs % 2200) / 2200;
-        // sample the spline at this progress position
-        const curveIdx = Math.min(Math.floor(hiProgress * (curve.length - 1)), curve.length - 2);
-        const localT = (hiProgress * (curve.length - 1)) - curveIdx;
-        const scanPt = {
-          x: curve[curveIdx].x + (curve[curveIdx + 1].x - curve[curveIdx].x) * localT,
-          y: curve[curveIdx].y + (curve[curveIdx + 1].y - curve[curveIdx].y) * localT,
-        };
-        // Only draw scan in visible zone (right of fade)
-        if (scanPt.x > fadeEnd) {
-          // glow aura centered on curve at scan position
-          const scanGrad = ctx.createRadialGradient(scanPt.x, scanPt.y, 0, scanPt.x, scanPt.y, 55);
-          scanGrad.addColorStop(0, 'rgba(255,200,210,0.55)');
-          scanGrad.addColorStop(0.4, 'rgba(255,100,130,0.18)');
-          scanGrad.addColorStop(1, 'rgba(255,61,90,0)');
-          ctx.save();
-          ctx.beginPath(); ctx.arc(scanPt.x, scanPt.y, 55, 0, Math.PI * 2);
-          ctx.fillStyle = scanGrad; ctx.fill();
-          ctx.restore();
-          // bright dot on the scan position
-          ctx.save();
-          ctx.beginPath(); ctx.arc(scanPt.x, scanPt.y, 3.5, 0, Math.PI * 2);
-          ctx.shadowColor = 'rgba(255,255,255,0.9)'; ctx.shadowBlur = 10;
-          ctx.fillStyle = '#fff'; ctx.fill();
-          ctx.shadowBlur = 0; ctx.restore();
-        }
+      /* Build full waveform path (all n complexes, static in their slots) */
+      const SAMPLES = 60; // samples per complex
+
+      /* Helper: x,y for complex i at phase t ∈[0,1] */
+      function complexPt(i, t) {
+        const shape = pqrstShape(bpmToAmplitude(vals[i]));
+        const yNorm = evalPQRST(shape, t);
+        const x = x0 + i * complexW + t * complexW;
+        const y = baseline - yNorm * maxAmp;
+        return { x, y };
       }
 
-      /* ── pulsing dot at latest (rightmost) data point ── */
-      const lastPt = curve[curve.length - 1];
-      const pulse = 2.5 + Math.sin((animMs || 0) * 0.01) * 0.8;
+      /* Draw trailing area fill under the waveform */
+      const areaGrad = ctx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.25);
+      areaGrad.addColorStop(0,   'rgba(255,61,90,0.15)');
+      areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.06)');
+      areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
+
+      ctx.save();
+      // Clip to ECG zone, with left fade
+      const clipGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
+      // We'll just hard-clip at x0 for the fill
+      ctx.beginPath();
+      ctx.rect(x0, 0, w - x0, h);
+      ctx.clip();
+
+      ctx.beginPath();
+      let first = true;
+      for (let i = 0; i < n; i++) {
+        for (let s = 0; s <= SAMPLES; s++) {
+          const t = s / SAMPLES;
+          const pt = complexPt(i, t);
+          if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
+          else ctx.lineTo(pt.x, pt.y);
+        }
+      }
+      // close area
+      const lastPt = complexPt(n - 1, 1);
+      const firstPt = complexPt(0, 0);
+      ctx.lineTo(lastPt.x, baseline);
+      ctx.lineTo(firstPt.x, baseline);
+      ctx.closePath();
+      ctx.fillStyle = areaGrad;
+      ctx.fill();
+      ctx.restore();
+
+      /* Draw waveform line with left-edge fade */
+      const lineGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
+      lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
+      lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
+
       ctx.save();
       ctx.beginPath();
-      ctx.arc(lastPt.x + 2, lastPt.y, pulse + 4, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,61,90,0.18)';
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(lastPt.x + 2, lastPt.y, pulse, 0, Math.PI * 2);
-      ctx.shadowColor = 'rgba(255,255,255,0.9)'; ctx.shadowBlur = 8;
-      ctx.fillStyle = '#fff'; ctx.fill();
+      first = true;
+      for (let i = 0; i < n; i++) {
+        for (let s = 0; s <= SAMPLES; s++) {
+          const t = s / SAMPLES;
+          const pt = complexPt(i, t);
+          if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
+          else ctx.lineTo(pt.x, pt.y);
+        }
+      }
+      ctx.strokeStyle = lineGrad;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
+      ctx.stroke();
       ctx.shadowBlur = 0;
       ctx.restore();
 
-      /* ── small BPM label at each data node ── */
-      ctx.save();
-      ctx.font = '500 10px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      for (let i = 0; i < pts.length; i++) {
-        const px = pts[i].x, py = pts[i].y;
-        if (px < fadeEnd) continue; // skip nodes behind fade zone
-        const label = String(Math.round(vals[i]));
-        const isLast = i === pts.length - 1;
-        ctx.fillStyle = isLast ? 'rgba(255,255,255,0.92)' : 'rgba(255,143,163,0.7)';
-        ctx.fillText(label, px, py - 10);
-        // node dot
-        ctx.beginPath(); ctx.arc(px, py, isLast ? 3.5 : 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = isLast ? '#ff3d5a' : 'rgba(255,143,163,0.55)';
-        ctx.fill();
+      /* Scanning cursor — a vertical bright line at current scan X */
+      const scanX = x0 + (ecgScanPos / n) * (w - x0 - 8);
+      if (scanX > fadeX && scanX < w - 2) {
+        // vertical sweep line
+        const sweepGrad = ctx.createLinearGradient(scanX - 18, 0, scanX + 6, 0);
+        sweepGrad.addColorStop(0, 'rgba(255,61,90,0)');
+        sweepGrad.addColorStop(0.7, 'rgba(255,100,130,0.22)');
+        sweepGrad.addColorStop(1, 'rgba(255,200,220,0.7)');
+        ctx.save();
+        ctx.fillStyle = sweepGrad;
+        ctx.fillRect(scanX - 18, 0, 24, h);
+        ctx.restore();
+
+        // dot on the waveform at scan position
+        const scanI = Math.floor(ecgScanPos);
+        const scanT = ecgScanPos - scanI;
+        if (scanI < n) {
+          const dot = complexPt(Math.min(scanI, n-1), Math.min(scanT, 1));
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(dot.x, dot.y, 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,61,90,0.25)';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(dot.x, dot.y, 2.8, 0, Math.PI * 2);
+          ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
+          ctx.fillStyle = '#fff'; ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.restore();
+        }
       }
+
+      /* BPM labels above each complex's R-peak */
+      ctx.save();
+      ctx.font = '400 9.5px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      for (let i = 0; i < n; i++) {
+        const rPeakT = 0.38;
+        const pt = complexPt(i, rPeakT);
+        if (pt.x < fadeX + 10) continue;
+        const isLatest = (i === n - 1);
+        ctx.fillStyle = isLatest ? 'rgba(255,255,255,0.88)' : 'rgba(255,143,163,0.55)';
+        ctx.fillText(String(Math.round(vals[i])), pt.x, pt.y - 9);
+      }
+      ctx.restore();
+
+      /* Left fade mask */
+      const leftMask = ctx.createLinearGradient(x0, 0, fadeX, 0);
+      leftMask.addColorStop(0, 'rgba(14,18,26,1)');
+      leftMask.addColorStop(1, 'rgba(14,18,26,0)');
+      ctx.save();
+      ctx.fillStyle = leftMask;
+      ctx.fillRect(x0, 0, fadeX - x0 + 2, h);
       ctx.restore();
     }
 
     function syncSparklineTargets(newVals) {
       const next = newVals.slice(0, RECENT_COUNT);
       if (sparklineRenderValues.length !== next.length) {
-        // length changed (e.g. first load): snap immediately
         sparklineRenderValues = next.slice();
       }
-      // Always update targets; animateSparklineFollow will lerp toward them
       sparklineValues = next;
     }
 
     function animateSparklineFollow() {
       if (!sparklineValues.length || sparklineValues.length !== sparklineRenderValues.length) return;
-      let settled = true;
       for (let i = 0; i < sparklineRenderValues.length; i++) {
         const diff = sparklineValues[i] - sparklineRenderValues[i];
-        if (Math.abs(diff) > 0.05) {
-          sparklineRenderValues[i] += diff * 0.08; // smooth, ~1s transition at 60fps
-          settled = false;
-        } else {
-          sparklineRenderValues[i] = sparklineValues[i];
-        }
+        sparklineRenderValues[i] += Math.abs(diff) > 0.05 ? diff * 0.07 : diff;
+      }
+      // Advance ECG scan cursor at heart rate speed
+      updateEcgSpeed();
+      if (ecgLastTs != null) {
+        // ecgScanSpeed is complexes/ms; wrap within [0, RECENT_COUNT)
+        // We don't actually advance here — done in loop() with real timestamps
       }
     }
 
@@ -666,8 +731,13 @@
       requestAnimationFrame(loop);
       if (!pageVisible) return;
 
-      /* keep trend panel animated even between data refreshes */
-      if (sparklineValues.length) {
+      /* Advance ECG scan cursor at real heart rate */
+      if (ecgLastTs === null) ecgLastTs = now;
+      const dt = now - ecgLastTs;
+      ecgLastTs = now;
+      if (sparklineRenderValues.length) {
+        updateEcgSpeed();
+        ecgScanPos = (ecgScanPos + ecgScanSpeed * dt) % RECENT_COUNT;
         animateSparklineFollow();
         drawSparkline(now);
       }
