@@ -283,8 +283,7 @@
 
 <script>
   (function () {
-    const RECENT_WINDOW_MINUTES = 6;
-    const RECENT_WINDOW_MS = RECENT_WINDOW_MINUTES * 60 * 1000;
+    const RECENT_COUNT = 6;
 
     /* ── state ── */
     let displayedBpm = null;
@@ -452,12 +451,11 @@
       document.getElementById('stat-max').innerHTML = `—<span class="stat-unit">bpm</span>`;
     }
 
-    function filterRecentReadings(readings) {
-      const now = Date.now();
+    function pickRecentReadings(readings) {
       return [...readings]
         .filter(r => !isNaN(new Date(r.time).getTime()))
         .sort((a, b) => new Date(b.time) - new Date(a.time))
-        .filter(r => now - new Date(r.time).getTime() <= RECENT_WINDOW_MS);
+        .slice(0, RECENT_COUNT);
     }
 
     /* ── render real data ── */
@@ -475,20 +473,20 @@
         allBpms = [];
         resetStats();
         sparklineValues = [];
-        document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
+        document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
         drawSparkline();
         return;
       }
 
-      const recentReadings = filterRecentReadings(readings);
+      const recentReadings = pickRecentReadings(readings);
       if (!recentReadings.length) {
         animateBpm(null);
-        document.getElementById('latest-time').textContent = `最近${RECENT_WINDOW_MINUTES}分钟无记录`;
+        document.getElementById('latest-time').textContent = `暂无最近${RECENT_COUNT}条记录`;
         latestTimeIso = null;
         allBpms = [];
         resetStats();
         sparklineValues = [];
-        document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
+        document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
         drawSparkline();
         autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
         return;
@@ -509,12 +507,12 @@
       allBpms = recentReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
       updateStats();
 
-      /* sparkline uses recent 6-minute readings in chronological order */
+      /* sparkline uses latest six readings in chronological order */
       sparklineValues = recentReadings.slice().reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v));
-      document.getElementById('ecg-label').textContent = `最近${RECENT_WINDOW_MINUTES}分钟趋势`;
+      document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
       drawSparkline();
 
-      for (const r of recentReadings.slice(0, 50)) {
+      for (const r of recentReadings) {
         const bVal = r.bpm != null ? Math.round(r.bpm) : null;
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
