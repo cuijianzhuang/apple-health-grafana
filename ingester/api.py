@@ -85,6 +85,44 @@ METRIC_NAME_MAP: dict[str, str] = {
     "uv_exposure": "UVExposure",
 }
 
+# 每天只有一条汇总记录的指标：写入时将时间戳归一化到当天 UTC 零点，
+# 使重复导入自动覆盖而非追加。心率、血压等逐次读数指标不在此列。
+_DAILY_AGGREGATE_METRICS: frozenset[str] = frozenset({
+    "step_count",
+    "active_energy",
+    "basal_energy_burned",
+    "dietary_energy",
+    "walking_running_distance",
+    "cycling_distance",
+    "swimming_distance",
+    "flights_climbed",
+    "exercise_time",
+    "stand_time",
+    "stand_hour",
+    "walking_speed",
+    "walking_step_length",
+    "walking_double_support_percentage",
+    "walking_asymmetry_percentage",
+    "stair_ascent_speed",
+    "stair_descent_speed",
+    "six_minute_walk_test_distance",
+    "vo2_max",
+    "weight_body_mass",
+    "body_mass_index",
+    "body_fat_percentage",
+    "lean_body_mass",
+    "height",
+    "waist_circumference",
+    "dietary_water",
+    "dietary_caffeine",
+    "mindful_minutes",
+    "handwashing",
+    "toothbrushing",
+    "noise_exposure",
+    "headphone_audio_exposure",
+    "uv_exposure",
+})
+
 SLEEP_DURATION_STATES: dict[str, str] = {
     "inBed": "HKCategoryValueSleepAnalysisInBed",
     "asleep": "HKCategoryValueSleepAnalysisAsleepUnspecified",
@@ -283,6 +321,8 @@ def _convert_metric(metric: dict[str, Any]) -> list[dict]:
         ts = _parse_date(dp.get("date", ""))
         if ts is None:
             continue
+        if name in _DAILY_AGGREGATE_METRICS:
+            ts = (ts // 86400) * 86400  # 归一化到当天 UTC 零点，利用 InfluxDB 原生覆盖
         source = dp.get("source", "Health Auto Export")
 
         if name == "sleep_analysis":
@@ -499,6 +539,43 @@ def heartbeat_recent():
     return jsonify({"readings": readings, "latest": latest})
 
 
+def _delete_existing_day_points(client: InfluxDBClient, points: list[dict]) -> None:
+    """删除睡眠相关 measurement 在相同 (tags, 当天) 范围内的旧数据。
+    睡眠分析会按分钟展开大量数据点，边界变化会留下残留点，需在重写前清除。"""
+    seen: set[tuple] = set()
+    for p in points:
+        measurement = p.get("measurement")
+        ts = p.get("time")
+        if not measurement or ts is None:
+            continue
+        tags: dict = p.get("tags") or {}
+        day_start = (int(ts) // 86400) * 86400
+        key = (measurement, tuple(sorted(tags.items())), day_start)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        day_end = day_start + 86400
+        start_str = datetime.utcfromtimestamp(day_start).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_str = datetime.utcfromtimestamp(day_end).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        tag_cond = " AND ".join(
+            f'"{k}"=\'{v}\'' for k, v in sorted(tags.items())
+        )
+        if tag_cond:
+            q = (
+                f'DELETE FROM "{measurement}" WHERE {tag_cond}'
+                f" AND time >= '{start_str}' AND time < '{end_str}'"
+            )
+        else:
+            q = f'DELETE FROM "{measurement}" WHERE time >= \'{start_str}\' AND time < \'{end_str}\''
+
+        try:
+            client.query(q)
+        except Exception as exc:
+            log.warning("删除旧数据失败（%s）: %s", measurement, exc)
+
+
 @app.route("/api/healthautoexport", methods=["POST"])
 def ingest():
     """接收 Health Auto Export 发送的 JSON 数据。"""
@@ -548,6 +625,9 @@ def ingest():
     all_points = health_points + source_points
     try:
         client = _get_influx()
+        sleep_points = [p for p in health_points if p.get("measurement", "").startswith("Sleep")]
+        if sleep_points:
+            _delete_existing_day_points(client, sleep_points)
         client.write_points(all_points, time_precision="s")
     except Exception as err:
         log.exception("写入 InfluxDB 失败。")
