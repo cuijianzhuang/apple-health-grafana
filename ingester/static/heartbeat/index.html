@@ -1,759 +1,845 @@
 <!DOCTYPE html>
 <html lang="zh-Hans">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Your Soul, Your Beats — 心率</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@300;400;600&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --bg: #080b10;
-      --surface: rgba(255,255,255,0.03);
-      --panel: rgba(14,18,26,0.9);
-      --border: rgba(255,255,255,0.07);
-      --text: #f0f2f5;
-      --muted: #4a5568;
-      --muted2: #718096;
-      --red: #ff3d5a;
-      --red-glow: rgba(255,61,90,0.35);
-      --red-dim: rgba(255,61,90,0.12);
-      --pink: #ff8fa3;
-      --blue: #378ADD;
-      --pulse-ms: 800ms;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      min-height: 100vh;
-      font-family: "Syne", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-    }
-    body::before {
-      content: "";
-      position: fixed; inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
-      background-size: 200px 200px;
-      pointer-events: none; z-index: 0; opacity: 0.6;
-    }
-    .ambient { position: fixed; pointer-events: none; z-index: 0; border-radius: 50%; }
-    .ambient-1 { width:600px;height:600px;top:-180px;left:-120px;background:radial-gradient(circle,rgba(255,61,90,0.07) 0%,transparent 70%); }
-    .ambient-2 { width:450px;height:450px;bottom:-80px;right:-80px;background:radial-gradient(circle,rgba(80,30,180,0.05) 0%,transparent 70%); }
-    .wrap { position:relative;z-index:1;max-width:920px;margin:0 auto;padding:2.5rem 1.5rem 4rem; }
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your Soul, Your Beats — 心率</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@300;400;600&display=swap" rel="stylesheet" />
+    <style>
+        :root {
+            --bg: #080b10;
+            --surface: rgba(255,255,255,0.03);
+            --panel: rgba(14,18,26,0.9);
+            --border: rgba(255,255,255,0.07);
+            --text: #f0f2f5;
+            --muted: #4a5568;
+            --muted2: #718096;
+            --red: #ff3d5a;
+            --red-glow: rgba(255,61,90,0.35);
+            --red-dim: rgba(255,61,90,0.12);
+            --pink: #ff8fa3;
+            --blue: #378ADD;
+            --pulse-ms: 800ms;
+        }
 
-    /* Header */
-    header { display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2rem;gap:1rem;flex-wrap:wrap; }
-    .brand-tag { font-size:.65rem;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--red);margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem; }
-    .brand-tag::before { content:"";width:16px;height:2px;background:var(--red);display:inline-block; }
-    header h1 { font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;letter-spacing:-.04em;line-height:1; }
-    header h1 span { color:var(--red); }
-    .header-sub { margin-top:.5rem;font-size:.75rem;color:var(--muted2);font-family:"JetBrains Mono",monospace;font-weight:300; }
-    .header-sub a { color:var(--red);text-decoration:none; }
-    .header-sub a:hover { text-decoration:underline; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    /* Toolbar */
-    .toolbar { display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;justify-content:flex-end; }
-    button { font-family:"Syne",sans-serif;font-size:.72rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:.52rem 1.15rem;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--muted2);cursor:pointer;transition:all .18s; }
-    button:hover { color:var(--text);border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.05); }
-    button.primary { background:var(--red);border-color:var(--red);color:#fff; }
-    button.primary:hover { background:#ff5570; }
-    input[type="password"] { font-family:"JetBrains Mono",monospace;font-size:.78rem;padding:.5rem .85rem;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);width:min(240px,100%); }
-    input[type="password"]:focus { outline:none;border-color:rgba(255,61,90,.4); }
-    .hint { font-size:.73rem;color:var(--muted2);text-align:right;margin-bottom:.4rem;font-family:"JetBrains Mono",monospace; }
-    #key-row { margin-bottom:1rem;justify-content:flex-end; }
+        body {
+            min-height: 100vh;
+            font-family: "Syne", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+        }
 
-    /* ── Unified hero panel ── */
-    .hero-panel {
-      position: relative;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      overflow: hidden;
-      margin-bottom: 1rem;
-      height: 260px;
-      background:
-              radial-gradient(ellipse 55% 120% at 18% 50%, rgba(255,61,90,0.13) 0%, transparent 60%),
-              rgba(14,18,26,0.92);
-    }
-    /* top accent line */
-    .hero-panel::before {
-      content:""; position:absolute; top:0; left:0; right:0; height:1px;
-      background:linear-gradient(90deg,transparent,rgba(255,61,90,.55) 35%,rgba(255,143,163,.4) 55%,transparent);
-    }
+        body::before {
+            content: "";
+            position: fixed; inset: 0;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+            background-size: 200px 200px;
+            pointer-events: none; z-index: 0; opacity: 0.6;
+        }
 
-    /* ECG canvas fills entire panel as background layer */
-    #ecg-canvas {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
+        .ambient { position: fixed; pointer-events: none; z-index: 0; border-radius: 50%; }
+        .ambient-1 { width:600px;height:600px;top:-180px;left:-120px;background:radial-gradient(circle,rgba(255,61,90,0.07) 0%,transparent 70%); }
+        .ambient-2 { width:450px;height:450px;bottom:-80px;right:-80px;background:radial-gradient(circle,rgba(80,30,180,0.05) 0%,transparent 70%); }
 
-    /* heart + data overlay, left side */
-    .hero-left {
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 300px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0;
-      z-index: 2;
-      /* fade the ECG out behind the heart area */
-      background: linear-gradient(90deg, rgba(14,18,26,0.88) 55%, transparent 100%);
-    }
+        .wrap { position:relative;z-index:1;max-width:920px;margin:0 auto;padding:2.5rem 1.5rem 4rem; }
 
-    /* heart svg */
-    #heart-svg-el {
-      width: 120px;
-      height: 110px;
-      filter: drop-shadow(0 0 20px rgba(255,61,90,.45));
-      transition: filter .08s;
-      flex-shrink: 0;
-    }
+        /* ── Header ── */
+        header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
 
-    /* data block overlaid on heart */
-    .bpm-block {
-      margin-top: -8px;
-      text-align: center;
-    }
-    .bpm-big {
-      font-family: "JetBrains Mono", monospace;
-      font-size: clamp(3.2rem, 7vw, 4.5rem);
-      font-weight: 600;
-      line-height: 1;
-      letter-spacing: -.04em;
-      color: var(--text);
-    }
-    .bpm-meta { display:flex;align-items:center;justify-content:center;gap:.5rem;margin-top:.4rem; }
-    .bpm-pill { font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--red);background:var(--red-dim);border:1px solid rgba(255,61,90,.22);padding:.2rem .5rem;border-radius:4px; }
-    .pulse-dot { width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;animation:pulseDot var(--pulse-ms,800ms) ease-out infinite; }
-    @keyframes pulseDot { 0%{box-shadow:0 0 0 0 var(--red-glow);opacity:1} 60%{box-shadow:0 0 0 7px rgba(255,61,90,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(255,61,90,0);opacity:1} }
-    .latest-time { margin-top:.45rem;font-family:"JetBrains Mono",monospace;font-size:.68rem;font-weight:300;color:var(--muted); }
+        .brand-tag {
+            font-size: .65rem;
+            font-weight: 700;
+            letter-spacing: .22em;
+            text-transform: uppercase;
+            color: var(--red);
+            margin-bottom: .5rem;
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+        }
+        .brand-tag::before { content:"";width:16px;height:2px;background:var(--red);display:inline-block; }
 
-    /* ECG label top-right */
-    .ecg-label {
-      position: absolute;
-      top: 1rem; right: 1.25rem;
-      font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
-      z-index: 2;
-    }
+        header h1 { font-size:clamp(1.6rem,4vw,2.4rem);font-weight:800;letter-spacing:-.04em;line-height:1; }
+        header h1 span { color:var(--red); }
 
-    /* Stats */
-    .stats-row { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:1rem;background:var(--border); }
-    .stat-cell { padding:1rem 1.25rem;background:var(--bg);transition:background .2s; }
-    .stat-cell:hover { background:rgba(255,255,255,.02); }
-    .stat-label { font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:.35rem; }
-    .stat-value { font-family:"JetBrains Mono",monospace;font-size:1.6rem;font-weight:600;color:var(--text);letter-spacing:-.03em;transition:color .4s; }
-    .stat-value.red { color:var(--red); }
-    .stat-value.blue { color:var(--blue); }
-    .stat-unit { font-size:.58rem;color:var(--muted);font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-left:.2rem; }
+        .header-sub { margin-top:.5rem;font-size:.75rem;color:var(--muted2);font-family:"JetBrains Mono",monospace;font-weight:300; }
+        .header-sub a { color:var(--red);text-decoration:none; }
+        .header-sub a:hover { text-decoration:underline; }
 
-    /* Table */
-    .section-label { font-size:.62rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem; }
-    .section-label::after { content:"";flex:1;height:1px;background:var(--border); }
-    .table-card { border:1px solid var(--border);border-radius:14px;overflow:hidden; }
-    table { width:100%;border-collapse:collapse; }
-    thead tr { border-bottom:1px solid var(--border); }
-    th { padding:.7rem 1.25rem;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:rgba(255,255,255,.02); }
-    td { padding:.7rem 1.25rem;font-family:"JetBrains Mono",monospace;font-size:.8rem;font-weight:300;color:var(--muted2);border-bottom:1px solid rgba(255,255,255,.03);transition:background .15s; }
-    tr:last-child td { border-bottom:none; }
-    tr:hover td { background:rgba(255,255,255,.02); }
-    td:last-child { text-align:right; }
-    .bpm-row-val { display:inline-flex;align-items:center;gap:.4rem;font-weight:600;color:var(--text); }
-    .bpm-row-dot { width:5px;height:5px;border-radius:50%;background:var(--red);flex-shrink:0; }
-    .bpm-high .bpm-row-dot { background:#ff6b35; }
-    .bpm-low  .bpm-row-dot { background:#4ecdc4; }
-    @keyframes rowIn { from{opacity:0;background:rgba(255,61,90,.07)} to{opacity:1;background:transparent} }
-    .row-new td { animation:rowIn .6s ease forwards; }
+        /* ── Toolbar ── */
+        .toolbar { display:flex;align-items:center;justify-content:flex-end; }
 
-    .err { color:#fc8181;text-align:center;padding:1rem 1.25rem;font-size:.8rem;font-family:"JetBrains Mono",monospace;font-weight:300; }
-    .footnote { margin-top:2.5rem;text-align:center;font-size:.7rem;color:var(--muted);font-family:"JetBrains Mono",monospace;font-weight:300;line-height:1.8; }
-    .footnote code { color:var(--red); }
+        button {
+            font-family: "Syne", sans-serif;
+            font-size: .72rem;
+            font-weight: 700;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            padding: .52rem 1.15rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--muted2);
+            cursor: pointer;
+            transition: all .18s;
+        }
+        button:hover { color:var(--text);border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.05); }
+        button.primary { background:var(--red);border-color:var(--red);color:#fff; }
+        button.primary:hover { background:#ff5570; }
 
-    @media(max-width:700px) {
-      .hero-panel { height: 210px; }
-      .hero-left { width: 190px; }
-      #heart-svg-el { width: 85px; height: 78px; }
-      .stats-row { grid-template-columns:1fr 1fr; }
-      .stat-cell:last-child { grid-column:1/-1; }
-      header { flex-direction:column; }
-      .toolbar { justify-content:flex-start; }
-    }
-  </style>
+        /* ── Hero Panel ── */
+        .hero-panel {
+            position: relative;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+            height: 260px;
+            background:
+                    radial-gradient(ellipse 55% 120% at 18% 50%, rgba(255,61,90,0.13) 0%, transparent 60%),
+                    rgba(14,18,26,0.92);
+        }
+        .hero-panel::before {
+            content:""; position:absolute; top:0; left:0; right:0; height:1px;
+            background:linear-gradient(90deg,transparent,rgba(255,61,90,.55) 35%,rgba(255,143,163,.4) 55%,transparent);
+        }
+
+        #ecg-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .hero-left {
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+            background: linear-gradient(90deg, rgba(14,18,26,0.88) 55%, transparent 100%);
+        }
+
+        #heart-svg-el {
+            width: 120px;
+            height: 110px;
+            filter: drop-shadow(0 0 20px rgba(255,61,90,.45));
+            transition: filter .08s;
+            flex-shrink: 0;
+        }
+
+        .bpm-block { margin-top: -8px; text-align: center; }
+
+        .bpm-big {
+            font-family: "JetBrains Mono", monospace;
+            font-size: clamp(3.2rem, 7vw, 4.5rem);
+            font-weight: 600;
+            line-height: 1;
+            letter-spacing: -.04em;
+            color: var(--text);
+        }
+
+        .bpm-meta { display:flex;align-items:center;justify-content:center;gap:.5rem;margin-top:.4rem; }
+        .bpm-pill { font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--red);background:var(--red-dim);border:1px solid rgba(255,61,90,.22);padding:.2rem .5rem;border-radius:4px; }
+        .pulse-dot { width:7px;height:7px;border-radius:50%;background:var(--red);flex-shrink:0;animation:pulseDot var(--pulse-ms) ease-out infinite; }
+        @keyframes pulseDot { 0%{box-shadow:0 0 0 0 var(--red-glow);opacity:1} 60%{box-shadow:0 0 0 7px rgba(255,61,90,0);opacity:.6} 100%{box-shadow:0 0 0 0 rgba(255,61,90,0);opacity:1} }
+
+        .latest-time { margin-top:.45rem;font-family:"JetBrains Mono",monospace;font-size:.68rem;font-weight:300;color:var(--muted); }
+
+        .ecg-label {
+            position: absolute;
+            top: 1rem; right: 1.25rem;
+            font-size:.6rem;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+            z-index: 2;
+        }
+
+        /* ── Stats ── */
+        .stats-row { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:1rem;background:var(--border); }
+        .stat-cell { padding:1rem 1.25rem;background:var(--bg);transition:background .2s; }
+        .stat-cell:hover { background:rgba(255,255,255,.02); }
+        .stat-label { font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:.35rem; }
+        .stat-value { font-family:"JetBrains Mono",monospace;font-size:1.6rem;font-weight:600;color:var(--text);letter-spacing:-.03em;transition:color .4s; }
+        .stat-value.red { color:var(--red); }
+        .stat-value.blue { color:var(--blue); }
+        .stat-unit { font-size:.58rem;color:var(--muted);font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-left:.2rem; }
+
+        /* ── Table ── */
+        .section-label { font-size:.62rem;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem; }
+        .section-label::after { content:"";flex:1;height:1px;background:var(--border); }
+
+        .table-card { border:1px solid var(--border);border-radius:14px;overflow:hidden; }
+        table { width:100%;border-collapse:collapse; }
+        thead tr { border-bottom:1px solid var(--border); }
+        th { padding:.7rem 1.25rem;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:rgba(255,255,255,.02); }
+        td { padding:.7rem 1.25rem;font-family:"JetBrains Mono",monospace;font-size:.8rem;font-weight:300;color:var(--muted2);border-bottom:1px solid rgba(255,255,255,.03);transition:background .15s; }
+        tr:last-child td { border-bottom:none; }
+        tr:hover td { background:rgba(255,255,255,.02); }
+        td:last-child { text-align:right; }
+
+        .bpm-row-val { display:inline-flex;align-items:center;gap:.4rem;font-weight:600;color:var(--text); }
+        .bpm-row-dot { width:5px;height:5px;border-radius:50%;background:var(--red);flex-shrink:0; }
+        .bpm-high .bpm-row-dot { background:#ff6b35; }
+        .bpm-low  .bpm-row-dot { background:#4ecdc4; }
+
+        @keyframes rowIn { from{opacity:0;background:rgba(255,61,90,.07)} to{opacity:1;background:transparent} }
+        .row-new td { animation:rowIn .6s ease forwards; }
+
+        /* ── Carousel ── */
+        .bpm-big, .latest-time { transition: opacity .2s ease; }
+        .bpm-big.fade-swap, .latest-time.fade-swap { opacity: 0; }
+
+        .carousel-nav {
+            position: absolute;
+            bottom: .85rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: .85rem;
+            z-index: 3;
+        }
+        #carousel-dots { display: flex; gap: .4rem; align-items: center; }
+        .carousel-dot {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+            background: var(--muted);
+            cursor: pointer;
+            transition: all .25s;
+            flex-shrink: 0;
+        }
+        .carousel-dot.active {
+            background: var(--red);
+            width: 14px;
+            border-radius: 3px;
+            box-shadow: 0 0 6px var(--red-glow);
+        }
+        #carousel-index {
+            font-family: "JetBrains Mono", monospace;
+            font-size: .58rem;
+            font-weight: 300;
+            color: var(--muted);
+            letter-spacing: .08em;
+            min-width: 2.8rem;
+            text-align: center;
+        }
+
+        /* Active table row highlight */
+        tr.row-active td { background: rgba(255,61,90,0.06) !important; color: var(--text); }
+        tr.row-active .bpm-row-val { color: var(--red); }
+        tbody tr { cursor: pointer; }
+
+        .err { color:#fc8181;text-align:center;padding:1rem 1.25rem;font-size:.8rem;font-family:"JetBrains Mono",monospace;font-weight:300; }
+
+        .footnote { margin-top:2.5rem;text-align:center;font-size:.7rem;color:var(--muted);font-family:"JetBrains Mono",monospace;font-weight:300;line-height:1.8; }
+        .footnote code { color:var(--red); }
+
+        @media (max-width: 700px) {
+            .hero-panel { height: 210px; }
+            .hero-left { width: 190px; }
+            #heart-svg-el { width: 85px; height: 78px; }
+            .stats-row { grid-template-columns: 1fr 1fr; }
+            .stat-cell:last-child { grid-column: 1 / -1; }
+            header { flex-direction: column; }
+            .toolbar { justify-content: flex-start; }
+        }
+    </style>
 </head>
 <body>
 <div class="ambient ambient-1"></div>
 <div class="ambient ambient-2"></div>
 <div class="wrap">
-  <header>
-    <div>
-      <div class="brand-tag">Heart Monitor</div>
-      <h1>Your Soul,<br><span>Your Beats</span></h1>
-      <p class="header-sub">via <a href="https://github.com/yihong0618/iBeats" target="_blank" rel="noopener">iBeats</a> — Apple Watch / Health Auto Export</p>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:.5rem;align-items:flex-end;">
-      <div class="toolbar">
-        <button type="button" id="btn-refresh" class="primary">从服务器读取</button>
-      </div>
-    </div>
-  </header>
 
-  <!-- Unified hero: ECG fills background, heart+data overlay left side -->
-  <div class="hero-panel">
-    <canvas id="ecg-canvas"></canvas>
-    <div class="ecg-label" id="ecg-label">心率趋势</div>
-
-    <div class="hero-left">
-      <!-- Refined heart SVG using cubic bezier curves -->
-      <svg id="heart-svg-el" viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <radialGradient id="hg" cx="35%" cy="28%" r="72%">
-            <stop offset="0%"   stop-color="#ffb3c1"/>
-            <stop offset="40%"  stop-color="#ff3d5a"/>
-            <stop offset="100%" stop-color="#9b0d26"/>
-          </radialGradient>
-          <radialGradient id="hglow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stop-color="rgba(255,61,90,0.28)"/>
-            <stop offset="100%" stop-color="rgba(255,61,90,0)"/>
-          </radialGradient>
-        </defs>
-        <!-- ambient glow blob -->
-        <ellipse id="halo" cx="50" cy="48" rx="44" ry="40" fill="url(#hglow)" opacity="0.45"/>
-        <!-- proper heart using cubic beziers -->
-        <path id="heart-path"
-              d="M50,76
-               C50,76 10,52 10,28
-               C10,16 19,8 30,8
-               C38,8 45,13 50,20
-               C55,13 62,8 70,8
-               C81,8 90,16 90,28
-               C90,52 50,76 50,76 Z"
-              fill="url(#hg)"
-              stroke="rgba(255,140,160,0.35)" stroke-width="1"/>
-        <!-- specular highlight -->
-        <path d="M29,24 C34,15 45,13 50,21" fill="none"
-              stroke="rgba(255,235,240,0.5)" stroke-width="2.2" stroke-linecap="round"/>
-        <!-- inner soft shadow at bottom -->
-        <path d="M50,72 C35,60 18,48 14,34" fill="none"
-              stroke="rgba(100,0,20,0.25)" stroke-width="4" stroke-linecap="round"/>
-      </svg>
-
-      <div class="bpm-block">
-        <div class="bpm-big" id="big-bpm">—</div>
-        <div class="bpm-meta">
-          <span class="pulse-dot"></span>
-          <span class="bpm-pill">BPM</span>
+    <header>
+        <div>
+            <div class="brand-tag">Heart Monitor</div>
+            <h1>Your Soul,<br><span>Your Beats</span></h1>
+            <p class="header-sub">via <a href="https://github.com/yihong0618/iBeats" target="_blank" rel="noopener">iBeats</a> — Apple Watch / Health Auto Export</p>
         </div>
-        <div class="latest-time" id="latest-time">尚未加载</div>
-      </div>
-    </div>
-  </div>
+        <div class="toolbar">
+            <button type="button" id="btn-refresh" class="primary">从服务器读取</button>
+        </div>
+    </header>
 
-  <div class="stats-row">
-    <div class="stat-cell">
-      <div class="stat-label">最低心率</div>
-      <div class="stat-value blue" id="stat-min">—<span class="stat-unit">bpm</span></div>
+    <div class="hero-panel">
+        <canvas id="ecg-canvas"></canvas>
+        <div class="ecg-label" id="ecg-label">心率趋势</div>
+        <div class="hero-left">
+            <svg id="heart-svg-el" viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <radialGradient id="hg" cx="35%" cy="28%" r="72%">
+                        <stop offset="0%"   stop-color="#ffb3c1"/>
+                        <stop offset="40%"  stop-color="#ff3d5a"/>
+                        <stop offset="100%" stop-color="#9b0d26"/>
+                    </radialGradient>
+                    <radialGradient id="hglow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%"   stop-color="rgba(255,61,90,0.28)"/>
+                        <stop offset="100%" stop-color="rgba(255,61,90,0)"/>
+                    </radialGradient>
+                </defs>
+                <ellipse id="halo" cx="50" cy="48" rx="44" ry="40" fill="url(#hglow)" opacity="0.45"/>
+                <path id="heart-path"
+                      d="M50,76 C50,76 10,52 10,28 C10,16 19,8 30,8 C38,8 45,13 50,20 C55,13 62,8 70,8 C81,8 90,16 90,28 C90,52 50,76 50,76 Z"
+                      fill="url(#hg)"
+                      stroke="rgba(255,140,160,0.35)" stroke-width="1"/>
+                <path d="M29,24 C34,15 45,13 50,21" fill="none"
+                      stroke="rgba(255,235,240,0.5)" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M50,72 C35,60 18,48 14,34" fill="none"
+                      stroke="rgba(100,0,20,0.25)" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+            <div class="bpm-block">
+                <div class="bpm-big" id="big-bpm">—</div>
+                <div class="bpm-meta">
+                    <span class="pulse-dot"></span>
+                    <span class="bpm-pill">BPM</span>
+                </div>
+                <div class="latest-time" id="latest-time">尚未加载</div>
+            </div>
+        </div>
+        <!-- Carousel navigation dots -->
+        <div class="carousel-nav">
+            <div id="carousel-dots"></div>
+            <span id="carousel-index"></span>
+        </div>
     </div>
-    <div class="stat-cell">
-      <div class="stat-label">平均心率</div>
-      <div class="stat-value" id="stat-avg">—<span class="stat-unit">bpm</span></div>
-    </div>
-    <div class="stat-cell">
-      <div class="stat-label">最高心率</div>
-      <div class="stat-value red" id="stat-max">—<span class="stat-unit">bpm</span></div>
-    </div>
-  </div>
 
-  <div class="section-label">历史记录</div>
-  <div class="table-card">
-    <table>
-      <thead><tr><th>时间</th><th style="text-align:right;">心率 (BPM)</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div class="err" id="err" hidden></div>
-  </div>
+    <div class="stats-row">
+        <div class="stat-cell">
+            <div class="stat-label">最低心率</div>
+            <div class="stat-value blue" id="stat-min">—<span class="stat-unit">bpm</span></div>
+        </div>
+        <div class="stat-cell">
+            <div class="stat-label">平均心率</div>
+            <div class="stat-value" id="stat-avg">—<span class="stat-unit">bpm</span></div>
+        </div>
+        <div class="stat-cell">
+            <div class="stat-label">最高心率</div>
+            <div class="stat-value red" id="stat-max">—<span class="stat-unit">bpm</span></div>
+        </div>
+    </div>
 
-  <p class="footnote">访问 <code>/heartbeat/</code> 与 <code>/api/heartbeat/recent</code> 读取 InfluxDB 中的 HeartRate 测量数据</p>
+    <div class="section-label">历史记录</div>
+    <div class="table-card">
+        <table>
+            <thead><tr><th>时间</th><th style="text-align:right;">心率 (BPM)</th></tr></thead>
+            <tbody id="rows"></tbody>
+        </table>
+        <div class="err" id="err" hidden></div>
+    </div>
+
+    <p class="footnote">访问 <code>/heartbeat/</code> 与 <code>/api/heartbeat/recent</code> 读取 InfluxDB 中的 HeartRate 测量数据</p>
 </div>
 
 <script>
-  (function () {
-    const RECENT_COUNT = 6;
+    (function () {
+        const RECENT_COUNT = 10;
+        const CAROUSEL_INTERVAL = 3000; // ms per record
 
-    /* ── state ── */
-    let displayedBpm = null;
-    let currentBpm = 72;
-    let allBpms = [];
-    let sparklineValues = [];   // latest six BPM targets (chronological)
-    let sparklineRenderValues = []; // animated values shown on canvas
-    let autoRefreshTimer = null;
-    let relativeTimeInterval = null;
-    let latestTimeIso = null;
-    let pageVisible = true;
+        let displayedBpm = null;
+        let currentBpm = 72;
+        let allBpms = [];
+        let allReadings = [];          // full 10-record array (newest first)
+        let carouselIndex = 0;         // which record is currently shown
+        let carouselTimer = null;
+        let sparklineValues = [];
+        let sparklineRenderValues = [];
+        let autoRefreshTimer = null;
+        let relativeTimeInterval = null;
+        let latestTimeIso = null;
+        let pageVisible = true;
 
-    /* ── canvas ── */
-    const canvas = document.getElementById('ecg-canvas');
-    const ctx = canvas.getContext('2d');
-    let lastBeat = 0;
-    let heartScale = 1;
-    let heartPhase = 0;         // 0=idle 1=expand 2=contract
+        const canvas = document.getElementById('ecg-canvas');
+        const ctx = canvas.getContext('2d');
+        let lastBeat = 0;
+        let heartScale = 1;
+        let heartPhase = 0;
 
-    function initCanvas() {
-      const panel = canvas.parentElement;
-      const w = Math.max(panel.offsetWidth, 100);
-      const h = Math.max(panel.offsetHeight, 100);
-      canvas.width = w; canvas.height = h;
-      drawSparkline();
-    }
-
-    /* ─────────────────────────────────────────────────────────────────
-       ECG WAVEFORM ENGINE
-       Each BPM reading maps to one PQRST complex.
-       The 6 readings scroll left as a continuous ECG strip.
-       Amplitude of QRS peak scales with BPM (higher BPM → taller spike).
-       On data refresh the amplitudes lerp smoothly to their new targets.
-    ──────────────────────────────────────────────────────────────────── */
-
-    /* ECG zone: starts where hero-left panel ends */
-    function ecgZone() {
-      const w = canvas.width, h = canvas.height;
-      const leftW = Math.round(w * 0.325); // mirror of .hero-left width ratio
-      const fadeW = 40;                    // gradient fade-in over this many px
-      return { w, h, x0: leftW, fadeX: leftW + fadeW };
-    }
-
-    /* Generate one normalised PQRST complex as array of [t, y] pairs, t ∈ [0,1].
-       amplitude: 0–1 (1 = max height). Returns points in ECG strip space. */
-    function pqrstShape(amplitude) {
-      const a = Math.max(0.15, Math.min(1, amplitude));
-      // Each segment: [t_end, y] — y is normalised deviation from baseline (-1..+1)
-      // Baseline = 0, upward = positive
-      return [
-        [0.00,  0.00],   // start baseline
-        [0.12,  0.00],   // flat before P
-        [0.18,  0.08 * a], // P-wave up
-        [0.24,  0.00],   // back to baseline (Q trough start)
-        [0.30, -0.10 * a], // Q dip
-        [0.38,  1.00 * a], // R peak  ← tallest point, driven by amplitude
-        [0.44, -0.15 * a], // S dip
-        [0.52,  0.00],   // baseline return
-        [0.62,  0.00],   // flat before T
-        [0.72,  0.28 * a], // T-wave up
-        [0.82,  0.00],   // T-wave down
-        [1.00,  0.00],   // trailing baseline
-      ];
-    }
-
-    /* Evaluate pqrst shape at arbitrary t ∈ [0,1] via linear interp */
-    function evalPQRST(shape, t) {
-      for (let i = 1; i < shape.length; i++) {
-        if (t <= shape[i][0]) {
-          const t0 = shape[i-1][0], t1 = shape[i][0];
-          const y0 = shape[i-1][1], y1 = shape[i][1];
-          const f = (t1 === t0) ? 0 : (t - t0) / (t1 - t0);
-          return y0 + (y1 - y0) * f;
+        function initCanvas() {
+            const panel = canvas.parentElement;
+            canvas.width  = Math.max(panel.offsetWidth, 100);
+            canvas.height = Math.max(panel.offsetHeight, 100);
+            drawSparkline();
         }
-      }
-      return 0;
-    }
 
-    /* Convert normalised BPM to amplitude: 60→0.45, 100→0.85, 140→1.0 */
-    function bpmToAmplitude(bpm) {
-      return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
-    }
-
-    /* ECG scan state */
-    let ecgScanPos = 0;      // current scan position in [0, RECENT_COUNT) complex-space
-    let ecgScanSpeed = 0;    // complexes per ms, updated from currentBpm
-    let ecgLastTs = null;
-
-    function updateEcgSpeed() {
-      // one full complex = one heartbeat = 60000/bpm ms
-      ecgScanSpeed = currentBpm / 60000; // complexes per ms
-    }
-
-    /* Main ECG draw — called every rAF */
-    function drawSparkline(now = 0) {
-      const { w, h, x0, fadeX } = ecgZone();
-      ctx.clearRect(0, 0, w, h);
-
-      if (!sparklineRenderValues.length) return;
-
-      const vals = sparklineRenderValues;  // length = RECENT_COUNT (6)
-      const n = vals.length;
-
-      /* grid lines */
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,80,110,0.07)';
-      ctx.lineWidth = 0.5;
-      ctx.setLineDash([3, 5]);
-      const cols = 8, rows = 4;
-      const zoneW = w - x0;
-      for (let c = 0; c <= cols; c++) {
-        const x = x0 + (c / cols) * zoneW;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      }
-      for (let r = 1; r < rows; r++) {
-        const y = (r / rows) * h;
-        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      ctx.restore();
-
-      /* baseline */
-      const baseline = h * 0.62;
-      const maxAmp   = h * 0.42;  // max upward excursion in px
-
-      /* Complex width in px: distribute n complexes across the zone */
-      const complexW = (w - x0 - 8) / n;
-
-      /* Build full waveform path (all n complexes, static in their slots) */
-      const SAMPLES = 60; // samples per complex
-
-      /* Helper: x,y for complex i at phase t ∈[0,1] */
-      function complexPt(i, t) {
-        const shape = pqrstShape(bpmToAmplitude(vals[i]));
-        const yNorm = evalPQRST(shape, t);
-        const x = x0 + i * complexW + t * complexW;
-        const y = baseline - yNorm * maxAmp;
-        return { x, y };
-      }
-
-      /* Draw trailing area fill under the waveform */
-      const areaGrad = ctx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.25);
-      areaGrad.addColorStop(0,   'rgba(255,61,90,0.15)');
-      areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.06)');
-      areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
-
-      ctx.save();
-      // Clip to ECG zone, with left fade
-      const clipGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
-      // We'll just hard-clip at x0 for the fill
-      ctx.beginPath();
-      ctx.rect(x0, 0, w - x0, h);
-      ctx.clip();
-
-      ctx.beginPath();
-      let first = true;
-      for (let i = 0; i < n; i++) {
-        for (let s = 0; s <= SAMPLES; s++) {
-          const t = s / SAMPLES;
-          const pt = complexPt(i, t);
-          if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
-          else ctx.lineTo(pt.x, pt.y);
+        function ecgZone() {
+            const w = canvas.width, h = canvas.height;
+            const leftW = Math.round(w * 0.325);
+            const fadeW = 40;
+            return { w, h, x0: leftW, fadeX: leftW + fadeW };
         }
-      }
-      // close area
-      const lastPt = complexPt(n - 1, 1);
-      const firstPt = complexPt(0, 0);
-      ctx.lineTo(lastPt.x, baseline);
-      ctx.lineTo(firstPt.x, baseline);
-      ctx.closePath();
-      ctx.fillStyle = areaGrad;
-      ctx.fill();
-      ctx.restore();
 
-      /* Draw waveform line with left-edge fade */
-      const lineGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
-      lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
-      lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
-
-      ctx.save();
-      ctx.beginPath();
-      first = true;
-      for (let i = 0; i < n; i++) {
-        for (let s = 0; s <= SAMPLES; s++) {
-          const t = s / SAMPLES;
-          const pt = complexPt(i, t);
-          if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
-          else ctx.lineTo(pt.x, pt.y);
+        function pqrstShape(amplitude) {
+            const a = Math.max(0.15, Math.min(1, amplitude));
+            return [
+                [0.00,  0.00],
+                [0.12,  0.00],
+                [0.18,  0.08 * a],
+                [0.24,  0.00],
+                [0.30, -0.10 * a],
+                [0.38,  1.00 * a],
+                [0.44, -0.15 * a],
+                [0.52,  0.00],
+                [0.62,  0.00],
+                [0.72,  0.28 * a],
+                [0.82,  0.00],
+                [1.00,  0.00],
+            ];
         }
-      }
-      ctx.strokeStyle = lineGrad;
-      ctx.lineWidth = 2;
-      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.restore();
 
-      /* Scanning cursor — a vertical bright line at current scan X */
-      const scanX = x0 + (ecgScanPos / n) * (w - x0 - 8);
-      if (scanX > fadeX && scanX < w - 2) {
-        // vertical sweep line
-        const sweepGrad = ctx.createLinearGradient(scanX - 18, 0, scanX + 6, 0);
-        sweepGrad.addColorStop(0, 'rgba(255,61,90,0)');
-        sweepGrad.addColorStop(0.7, 'rgba(255,100,130,0.22)');
-        sweepGrad.addColorStop(1, 'rgba(255,200,220,0.7)');
-        ctx.save();
-        ctx.fillStyle = sweepGrad;
-        ctx.fillRect(scanX - 18, 0, 24, h);
-        ctx.restore();
-
-        // dot on the waveform at scan position
-        const scanI = Math.floor(ecgScanPos);
-        const scanT = ecgScanPos - scanI;
-        if (scanI < n) {
-          const dot = complexPt(Math.min(scanI, n-1), Math.min(scanT, 1));
-          ctx.save();
-          ctx.beginPath();
-          ctx.arc(dot.x, dot.y, 4.5, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255,61,90,0.25)';
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(dot.x, dot.y, 2.8, 0, Math.PI * 2);
-          ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
-          ctx.fillStyle = '#fff'; ctx.fill();
-          ctx.shadowBlur = 0;
-          ctx.restore();
+        function evalPQRST(shape, t) {
+            for (let i = 1; i < shape.length; i++) {
+                if (t <= shape[i][0]) {
+                    const t0 = shape[i-1][0], t1 = shape[i][0];
+                    const y0 = shape[i-1][1], y1 = shape[i][1];
+                    const f = (t1 === t0) ? 0 : (t - t0) / (t1 - t0);
+                    return y0 + (y1 - y0) * f;
+                }
+            }
+            return 0;
         }
-      }
 
-      /* BPM labels above each complex's R-peak */
-      ctx.save();
-      ctx.font = '400 9.5px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      for (let i = 0; i < n; i++) {
-        const rPeakT = 0.38;
-        const pt = complexPt(i, rPeakT);
-        if (pt.x < fadeX + 10) continue;
-        const isLatest = (i === n - 1);
-        ctx.fillStyle = isLatest ? 'rgba(255,255,255,0.88)' : 'rgba(255,143,163,0.55)';
-        ctx.fillText(String(Math.round(vals[i])), pt.x, pt.y - 9);
-      }
-      ctx.restore();
+        function bpmToAmplitude(bpm) {
+            return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
+        }
 
-      /* Left fade mask */
-      const leftMask = ctx.createLinearGradient(x0, 0, fadeX, 0);
-      leftMask.addColorStop(0, 'rgba(14,18,26,1)');
-      leftMask.addColorStop(1, 'rgba(14,18,26,0)');
-      ctx.save();
-      ctx.fillStyle = leftMask;
-      ctx.fillRect(x0, 0, fadeX - x0 + 2, h);
-      ctx.restore();
-    }
+        let ecgScanPos = 0;
+        let ecgScanSpeed = 0;
+        let ecgLastTs = null;
 
-    function syncSparklineTargets(newVals) {
-      const next = newVals.slice(0, RECENT_COUNT);
-      if (sparklineRenderValues.length !== next.length) {
-        sparklineRenderValues = next.slice();
-      }
-      sparklineValues = next;
-    }
+        function updateEcgSpeed() {
+            ecgScanSpeed = currentBpm / 60000;
+        }
 
-    function animateSparklineFollow() {
-      if (!sparklineValues.length || sparklineValues.length !== sparklineRenderValues.length) return;
-      for (let i = 0; i < sparklineRenderValues.length; i++) {
-        const diff = sparklineValues[i] - sparklineRenderValues[i];
-        sparklineRenderValues[i] += Math.abs(diff) > 0.05 ? diff * 0.07 : diff;
-      }
-      // Advance ECG scan cursor at heart rate speed
-      updateEcgSpeed();
-      if (ecgLastTs != null) {
-        // ecgScanSpeed is complexes/ms; wrap within [0, RECENT_COUNT)
-        // We don't actually advance here — done in loop() with real timestamps
-      }
-    }
+        function drawSparkline() {
+            const { w, h, x0, fadeX } = ecgZone();
+            ctx.clearRect(0, 0, w, h);
+            if (!sparklineRenderValues.length) return;
 
-    /* ── heart beat animation ── */
-    function updateHeart(now) {
-      const beatMs = Math.round(60000 / currentBpm);
-      if (now - lastBeat >= beatMs) { lastBeat = now; heartPhase = 1; }
-      if      (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
-      else if (heartPhase === 2) { heartScale = Math.max(1.0,  heartScale - 0.007); if (heartScale <= 1.0)  heartPhase = 0; }
+            const vals = sparklineRenderValues;
+            const n = vals.length;
 
-      const cx = 50, cy = 48;
-      const t = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
-      document.getElementById('heart-path').setAttribute('transform', t);
-      document.getElementById('halo').setAttribute('transform', t);
-      document.getElementById('halo').setAttribute('opacity', (0.3 + (heartScale - 1) * 3.5).toFixed(3));
-      document.getElementById('heart-svg-el').style.filter =
-              `drop-shadow(0 0 ${Math.round((heartScale - 1) * 160)}px rgba(255,61,90,0.65))`;
-    }
+            // Grid lines
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255,80,110,0.07)';
+            ctx.lineWidth = 0.5;
+            ctx.setLineDash([3, 5]);
+            const cols = 8, rows = 4;
+            const zoneW = w - x0;
+            for (let c = 0; c <= cols; c++) {
+                const x = x0 + (c / cols) * zoneW;
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            }
+            for (let r = 1; r < rows; r++) {
+                const y = (r / rows) * h;
+                ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            ctx.restore();
 
-    function setPulseInterval(bpm) {
-      document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
-    }
+            const baseline = h * 0.62;
+            const maxAmp   = h * 0.42;
+            const complexW = (w - x0 - 8) / n;
+            const SAMPLES  = 60;
 
-    function animateBpm(target) {
-      const node = document.getElementById('big-bpm');
-      if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
-      const goal = Math.round(target), start = displayedBpm == null ? goal : displayedBpm;
-      const dur = 700, t0 = performance.now();
-      function step(ts) {
-        const p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
-        node.textContent = String(Math.round(start + (goal - start) * e));
-        if (p < 1) requestAnimationFrame(step); else displayedBpm = goal;
-      }
-      requestAnimationFrame(step);
-    }
+            function complexPt(i, t) {
+                const shape = pqrstShape(bpmToAmplitude(vals[i]));
+                return {
+                    x: x0 + i * complexW + t * complexW,
+                    y: baseline - evalPQRST(shape, t) * maxAmp,
+                };
+            }
 
-    function fmtTime(iso) {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      if (isNaN(d)) return iso;
-      return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-    }
+            // Area fill
+            const areaGrad = ctx.createLinearGradient(0, baseline - maxAmp, 0, baseline + maxAmp * 0.25);
+            areaGrad.addColorStop(0,   'rgba(255,61,90,0.15)');
+            areaGrad.addColorStop(0.6, 'rgba(255,61,90,0.06)');
+            areaGrad.addColorStop(1,   'rgba(255,61,90,0)');
 
-    function fmtRelativeTime(iso) {
-      if (!iso) return '—';
-      const d = new Date(iso);
-      if (isNaN(d)) return fmtTime(iso);
-      const mins = Math.floor((Date.now() - d) / 60000);
-      if (mins < 1)  return '刚刚';
-      if (mins < 60) return `${mins} 分钟前`;
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24)  return `${hrs} 小时前`;
-      return fmtTime(iso);
-    }
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x0, 0, w - x0, h);
+            ctx.clip();
+            ctx.beginPath();
+            let first = true;
+            for (let i = 0; i < n; i++) {
+                for (let s = 0; s <= SAMPLES; s++) {
+                    const pt = complexPt(i, s / SAMPLES);
+                    if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
+                    else ctx.lineTo(pt.x, pt.y);
+                }
+            }
+            ctx.lineTo(complexPt(n - 1, 1).x, baseline);
+            ctx.lineTo(complexPt(0, 0).x, baseline);
+            ctx.closePath();
+            ctx.fillStyle = areaGrad;
+            ctx.fill();
+            ctx.restore();
 
-    function bpmCat(bpm) {
-      if (bpm >= 100) return 'bpm-high';
-      if (bpm <= 60)  return 'bpm-low';
-      return '';
-    }
+            // Waveform line
+            const lineGrad = ctx.createLinearGradient(x0, 0, fadeX, 0);
+            lineGrad.addColorStop(0, 'rgba(255,61,90,0)');
+            lineGrad.addColorStop(1, 'rgba(255,61,90,1)');
 
-    function updateStats() {
-      if (!allBpms.length) return;
-      const mn = Math.min(...allBpms), mx = Math.max(...allBpms);
-      const av = Math.round(allBpms.reduce((a, b) => a + b, 0) / allBpms.length);
-      document.getElementById('stat-min').innerHTML = `${mn}<span class="stat-unit">bpm</span>`;
-      document.getElementById('stat-avg').innerHTML = `${av}<span class="stat-unit">bpm</span>`;
-      document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
-    }
+            ctx.save();
+            ctx.beginPath();
+            first = true;
+            for (let i = 0; i < n; i++) {
+                for (let s = 0; s <= SAMPLES; s++) {
+                    const pt = complexPt(i, s / SAMPLES);
+                    if (first) { ctx.moveTo(pt.x, pt.y); first = false; }
+                    else ctx.lineTo(pt.x, pt.y);
+                }
+            }
+            ctx.strokeStyle = lineGrad;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.restore();
 
-    function resetStats() {
-      document.getElementById('stat-min').innerHTML = `—<span class="stat-unit">bpm</span>`;
-      document.getElementById('stat-avg').innerHTML = `—<span class="stat-unit">bpm</span>`;
-      document.getElementById('stat-max').innerHTML = `—<span class="stat-unit">bpm</span>`;
-    }
+            // Scanning cursor
+            const scanX = x0 + (ecgScanPos / n) * (w - x0 - 8);
+            if (scanX > fadeX && scanX < w - 2) {
+                const sweepGrad = ctx.createLinearGradient(scanX - 18, 0, scanX + 6, 0);
+                sweepGrad.addColorStop(0,   'rgba(255,61,90,0)');
+                sweepGrad.addColorStop(0.7, 'rgba(255,100,130,0.22)');
+                sweepGrad.addColorStop(1,   'rgba(255,200,220,0.7)');
+                ctx.save();
+                ctx.fillStyle = sweepGrad;
+                ctx.fillRect(scanX - 18, 0, 24, h);
+                ctx.restore();
 
-    function pickRecentReadings(readings) {
-      return [...readings]
-              .filter(r => !isNaN(new Date(r.time).getTime()))
-              .sort((a, b) => new Date(b.time) - new Date(a.time))
-              .slice(0, RECENT_COUNT);
-    }
+                const scanI = Math.floor(ecgScanPos);
+                const scanT = ecgScanPos - scanI;
+                if (scanI < n) {
+                    const dot = complexPt(Math.min(scanI, n - 1), Math.min(scanT, 1));
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(dot.x, dot.y, 4.5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(255,61,90,0.25)';
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(dot.x, dot.y, 2.8, 0, Math.PI * 2);
+                    ctx.shadowColor = '#fff'; ctx.shadowBlur = 12;
+                    ctx.fillStyle = '#fff'; ctx.fill();
+                    ctx.shadowBlur = 0;
+                    ctx.restore();
+                }
+            }
 
-    /* ── render real data ── */
-    function render(readings, latest) {
-      document.getElementById('err').hidden = true;
-      clearInterval(autoRefreshTimer);
-      clearInterval(relativeTimeInterval);
-      const tbody = document.getElementById('rows');
-      tbody.innerHTML = '';
+            // BPM labels above R-peak
+            ctx.save();
+            ctx.font = '400 9.5px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            for (let i = 0; i < n; i++) {
+                const pt = complexPt(i, 0.38);
+                if (pt.x < fadeX + 10) continue;
+                ctx.fillStyle = (i === n - 1) ? 'rgba(255,255,255,0.88)' : 'rgba(255,143,163,0.55)';
+                ctx.fillText(String(Math.round(vals[i])), pt.x, pt.y - 9);
+            }
+            ctx.restore();
 
-      if (!readings.length) {
-        animateBpm(null);
-        document.getElementById('latest-time').textContent = '暂无心率记录';
-        latestTimeIso = null;
-        allBpms = [];
-        resetStats();
-        sparklineValues = [];
-        sparklineRenderValues = [];
-        document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
-        drawSparkline();
-        return;
-      }
+            // Left fade mask
+            const leftMask = ctx.createLinearGradient(x0, 0, fadeX, 0);
+            leftMask.addColorStop(0, 'rgba(14,18,26,1)');
+            leftMask.addColorStop(1, 'rgba(14,18,26,0)');
+            ctx.save();
+            ctx.fillStyle = leftMask;
+            ctx.fillRect(x0, 0, fadeX - x0 + 2, h);
+            ctx.restore();
+        }
 
-      const recentReadings = pickRecentReadings(readings);
-      if (!recentReadings.length) {
-        animateBpm(null);
-        document.getElementById('latest-time').textContent = `暂无最近${RECENT_COUNT}条记录`;
-        latestTimeIso = null;
-        allBpms = [];
-        resetStats();
-        sparklineValues = [];
-        sparklineRenderValues = [];
-        document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
-        drawSparkline();
-        autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
-        return;
-      }
+        function syncSparklineTargets(newVals) {
+            const next = newVals.slice(0, RECENT_COUNT);
+            if (sparklineRenderValues.length !== next.length) {
+                sparklineRenderValues = next.slice();
+            }
+            sparklineValues = next;
+        }
 
-      const latestRecent = recentReadings[0];
-      const bpm = latestRecent?.bpm ?? latest?.bpm;
-      currentBpm = Number(bpm) || 72;
-      animateBpm(bpm);
-      setPulseInterval(currentBpm);
+        function animateSparklineFollow() {
+            if (!sparklineValues.length || sparklineValues.length !== sparklineRenderValues.length) return;
+            for (let i = 0; i < sparklineRenderValues.length; i++) {
+                const diff = sparklineValues[i] - sparklineRenderValues[i];
+                sparklineRenderValues[i] += Math.abs(diff) > 0.05 ? diff * 0.07 : diff;
+            }
+        }
 
-      latestTimeIso = latestRecent?.time || latest?.time;
-      document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
-      relativeTimeInterval = setInterval(() => {
-        document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
-      }, 60000);
+        function updateHeart(now) {
+            const beatMs = Math.round(60000 / currentBpm);
+            if (now - lastBeat >= beatMs) { lastBeat = now; heartPhase = 1; }
+            if      (heartPhase === 1) { heartScale = Math.min(1.12, heartScale + 0.015); if (heartScale >= 1.12) heartPhase = 2; }
+            else if (heartPhase === 2) { heartScale = Math.max(1.0,  heartScale - 0.007); if (heartScale <= 1.0)  heartPhase = 0; }
 
-      allBpms = recentReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
-      updateStats();
+            const cx = 50, cy = 48;
+            const t = `translate(${cx},${cy}) scale(${heartScale.toFixed(4)}) translate(${-cx},${-cy})`;
+            document.getElementById('heart-path').setAttribute('transform', t);
+            const halo = document.getElementById('halo');
+            halo.setAttribute('transform', t);
+            halo.setAttribute('opacity', (0.3 + (heartScale - 1) * 3.5).toFixed(3));
+            document.getElementById('heart-svg-el').style.filter =
+                `drop-shadow(0 0 ${Math.round((heartScale - 1) * 160)}px rgba(255,61,90,0.65))`;
+        }
 
-      /* sparkline uses latest six readings in chronological order */
-      const sparklineNextValues = recentReadings
-              .slice()
-              .reverse()
-              .map(r => Number(r.bpm))
-              .filter(v => !isNaN(v));
-      syncSparklineTargets(sparklineNextValues);
-      document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
-      drawSparkline();
+        function setPulseInterval(bpm) {
+            document.documentElement.style.setProperty('--pulse-ms', Math.round(60000 / Math.max(1, bpm)) + 'ms');
+        }
 
-      for (const r of recentReadings) {
-        const bVal = r.bpm != null ? Math.round(r.bpm) : null;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
-        tbody.appendChild(tr);
-      }
+        function animateBpm(target) {
+            const node = document.getElementById('big-bpm');
+            if (target == null || isNaN(target)) { displayedBpm = null; node.textContent = '—'; return; }
+            const goal = Math.round(target), start = displayedBpm == null ? goal : displayedBpm;
+            const dur = 700, t0 = performance.now();
+            function step(ts) {
+                const p = Math.min((ts - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+                node.textContent = String(Math.round(start + (goal - start) * e));
+                if (p < 1) requestAnimationFrame(step); else displayedBpm = goal;
+            }
+            requestAnimationFrame(step);
+        }
 
-      autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
-    }
+        function fmtTime(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            if (isNaN(d)) return iso;
+            return d.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        }
 
-    function showError(msg) { const el = document.getElementById('err'); el.textContent = msg; el.hidden = !msg; }
+        function fmtRelativeTime(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            if (isNaN(d)) return fmtTime(iso);
+            const mins = Math.floor((Date.now() - d) / 60000);
+            if (mins < 1)  return '刚刚';
+            if (mins < 60) return `${mins} 分钟前`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24)  return `${hrs} 小时前`;
+            return fmtTime(iso);
+        }
 
-    async function fetchRecent(silent = false) {
-      const btn = document.getElementById('btn-refresh');
-      if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
-      try {
-        const res = await fetch('/api/heartbeat/recent?limit=200');
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
-        render(data.readings || [], data.latest);
-      } finally {
-        if (!silent) { btn.disabled = false; btn.textContent = '从服务器读取'; }
-      }
-    }
+        function bpmCat(bpm) {
+            if (bpm >= 100) return 'bpm-high';
+            if (bpm <= 60)  return 'bpm-low';
+            return '';
+        }
 
-    /* ── main rAF loop ── */
-    function loop(now) {
-      requestAnimationFrame(loop);
-      if (!pageVisible) return;
+        function updateStats() {
+            if (!allBpms.length) return;
+            const mn = Math.min(...allBpms), mx = Math.max(...allBpms);
+            const av = Math.round(allBpms.reduce((a, b) => a + b, 0) / allBpms.length);
+            document.getElementById('stat-min').innerHTML = `${mn}<span class="stat-unit">bpm</span>`;
+            document.getElementById('stat-avg').innerHTML = `${av}<span class="stat-unit">bpm</span>`;
+            document.getElementById('stat-max').innerHTML = `${mx}<span class="stat-unit">bpm</span>`;
+        }
 
-      /* Advance ECG scan cursor at real heart rate */
-      if (ecgLastTs === null) ecgLastTs = now;
-      const dt = now - ecgLastTs;
-      ecgLastTs = now;
-      if (sparklineRenderValues.length) {
-        updateEcgSpeed();
-        ecgScanPos = (ecgScanPos + ecgScanSpeed * dt) % RECENT_COUNT;
-        animateSparklineFollow();
-        drawSparkline(now);
-      }
+        function resetStats() {
+            ['stat-min', 'stat-avg', 'stat-max'].forEach(id => {
+                document.getElementById(id).innerHTML = `—<span class="stat-unit">bpm</span>`;
+            });
+        }
 
-      /* heart pulses at actual BPM */
-      updateHeart(now);
-    }
+        function pickRecentReadings(readings) {
+            return [...readings]
+                .filter(r => !isNaN(new Date(r.time).getTime()))
+                .sort((a, b) => new Date(b.time) - new Date(a.time))
+                .slice(0, RECENT_COUNT);
+        }
 
-    document.addEventListener('visibilitychange', () => { pageVisible = !document.hidden; });
-    document.getElementById('btn-refresh').addEventListener('click', () => fetchRecent(false));
-    window.addEventListener('resize', initCanvas);
+        /* ── Carousel: cycle through allReadings one by one ── */
+        function startCarousel() {
+            clearInterval(carouselTimer);
+            if (allReadings.length < 2) return;
+            carouselTimer = setInterval(() => {
+                carouselIndex = (carouselIndex + 1) % allReadings.length;
+                showCarouselItem(carouselIndex);
+            }, CAROUSEL_INTERVAL);
+        }
 
-    initCanvas();
-    requestAnimationFrame(loop);
-    fetchRecent(false).catch(() => { showError('无法连接 API。'); });
-  })();
+        function showCarouselItem(idx) {
+            const r = allReadings[idx];
+            if (!r) return;
+            const bpm = Number(r.bpm);
+
+            // Fade hero content
+            const bpmEl   = document.getElementById('big-bpm');
+            const timeEl  = document.getElementById('latest-time');
+            const idxEl   = document.getElementById('carousel-index');
+            bpmEl.classList.add('fade-swap');
+            timeEl.classList.add('fade-swap');
+            setTimeout(() => {
+                currentBpm = bpm || 72;
+                animateBpm(bpm);
+                setPulseInterval(currentBpm);
+                latestTimeIso = r.time;
+                timeEl.textContent = fmtRelativeTime(latestTimeIso);
+                idxEl.textContent  = `${idx + 1} / ${allReadings.length}`;
+                bpmEl.classList.remove('fade-swap');
+                timeEl.classList.remove('fade-swap');
+            }, 200);
+
+            // Highlight table row
+            document.querySelectorAll('#rows tr').forEach((tr, i) => {
+                tr.classList.toggle('row-active', i === idx);
+            });
+
+            // Scroll highlighted row into view
+            const activeRow = document.querySelector('#rows tr.row-active');
+            if (activeRow) activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+            // Update dot indicators
+            document.querySelectorAll('.carousel-dot').forEach((d, i) => {
+                d.classList.toggle('active', i === idx);
+            });
+        }
+
+        function render(readings, latest) {
+            document.getElementById('err').hidden = true;
+            clearInterval(autoRefreshTimer);
+            clearInterval(relativeTimeInterval);
+            clearInterval(carouselTimer);
+            document.getElementById('rows').innerHTML = '';
+
+            const recentReadings = readings.length ? pickRecentReadings(readings) : [];
+
+            if (!recentReadings.length) {
+                animateBpm(null);
+                document.getElementById('latest-time').textContent = readings.length ? `暂无最近${RECENT_COUNT}条记录` : '暂无心率记录';
+                latestTimeIso = null;
+                allBpms = [];
+                allReadings = [];
+                resetStats();
+                sparklineValues = [];
+                sparklineRenderValues = [];
+                document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
+                document.getElementById('carousel-dots').innerHTML = '';
+                document.getElementById('carousel-index').textContent = '';
+                drawSparkline();
+                if (readings.length) autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
+                return;
+            }
+
+            allReadings = recentReadings;
+            carouselIndex = 0;
+
+            const first = allReadings[0];
+            const bpm = Number(first?.bpm ?? latest?.bpm);
+            currentBpm = bpm || 72;
+            animateBpm(bpm);
+            setPulseInterval(currentBpm);
+
+            latestTimeIso = first?.time || latest?.time;
+            document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+            document.getElementById('carousel-index').textContent = `1 / ${allReadings.length}`;
+
+            relativeTimeInterval = setInterval(() => {
+                document.getElementById('latest-time').textContent = fmtRelativeTime(latestTimeIso);
+            }, 60000);
+
+            allBpms = allReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
+            updateStats();
+
+            // ECG uses up to RECENT_COUNT readings in chrono order
+            syncSparklineTargets([...allReadings].reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v)));
+            document.getElementById('ecg-label').textContent = `最近${allReadings.length}条趋势`;
+            drawSparkline();
+
+            // Build dot indicators
+            const dotsEl = document.getElementById('carousel-dots');
+            dotsEl.innerHTML = '';
+            allReadings.forEach((_, i) => {
+                const d = document.createElement('span');
+                d.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+                d.addEventListener('click', () => {
+                    clearInterval(carouselTimer);
+                    carouselIndex = i;
+                    showCarouselItem(i);
+                    startCarousel();
+                });
+                dotsEl.appendChild(d);
+            });
+
+            // Build table rows
+            const tbody = document.getElementById('rows');
+            allReadings.forEach((r, i) => {
+                const bVal = r.bpm != null ? Math.round(r.bpm) : null;
+                const tr = document.createElement('tr');
+                if (i === 0) tr.classList.add('row-active');
+                tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
+                tr.addEventListener('click', () => {
+                    clearInterval(carouselTimer);
+                    carouselIndex = i;
+                    showCarouselItem(i);
+                    startCarousel();
+                });
+                tbody.appendChild(tr);
+            });
+
+            startCarousel();
+            autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('err');
+            el.textContent = msg;
+            el.hidden = !msg;
+        }
+
+        async function fetchRecent(silent = false) {
+            const btn = document.getElementById('btn-refresh');
+            if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
+            try {
+                const res = await fetch('/api/heartbeat/recent?limit=10');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) { showError(data.error || data.detail || '请求失败 ' + res.status); return; }
+                render(data.readings || [], data.latest);
+            } finally {
+                if (!silent) { btn.disabled = false; btn.textContent = '从服务器读取'; }
+            }
+        }
+
+        function loop(now) {
+            requestAnimationFrame(loop);
+            if (!pageVisible) return;
+
+            if (ecgLastTs === null) ecgLastTs = now;
+            const dt = now - ecgLastTs;
+            ecgLastTs = now;
+
+            if (sparklineRenderValues.length) {
+                updateEcgSpeed();
+                ecgScanPos = (ecgScanPos + ecgScanSpeed * dt) % RECENT_COUNT;
+                animateSparklineFollow();
+                drawSparkline(now);
+            }
+
+            updateHeart(now);
+        }
+
+        document.addEventListener('visibilitychange', () => { pageVisible = !document.hidden; });
+        document.getElementById('btn-refresh').addEventListener('click', () => fetchRecent(false));
+        window.addEventListener('resize', initCanvas);
+
+        initCanvas();
+        requestAnimationFrame(loop);
+        fetchRecent(false).catch(() => { showError('无法连接 API。'); });
+    })();
 </script>
 </body>
 </html>
