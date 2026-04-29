@@ -612,16 +612,13 @@
             ctx.restore();
         }
 
-        /* ── Heart beat animation ── */
+        /* ── Heart beat animation — driven by same beatPhase as ECG ── */
         function updateHeart(now) {
-            const beatMs = 60000 / currentBpm;
-            const phase  = ((now - lastBeatTime) % beatMs) / beatMs; // 0..1 within beat
-
-            // expand quickly at start of beat, contract slowly
-            if (phase < 0.12) {
-                heartScale = 1 + (phase / 0.12) * 0.13;
-            } else if (phase < 0.35) {
-                heartScale = 1.13 - ((phase - 0.12) / 0.23) * 0.13;
+            const p = beatPhase; // 0..1 synced with ECG
+            if (p < 0.12) {
+                heartScale = 1 + (p / 0.12) * 0.13;
+            } else if (p < 0.38) {
+                heartScale = 1.13 - ((p - 0.12) / 0.26) * 0.13;
             } else {
                 heartScale = 1;
             }
@@ -824,33 +821,34 @@
             }
         }
 
-        /* ── Main rAF loop ── */
-        let lastRafNow = null;
-        let prevBeatPhase = 0;
+        /* ── Main rAF loop ──
+           Each record gets ONE full heartbeat (phase 0→1).
+           When phase reaches 1, finish the beat, switch record, reset to 0. */
+        let beatPhase    = 0;
+        let lastFrameNow = null;
 
         function loop(now) {
             requestAnimationFrame(loop);
             if (!pageVisible) return;
-            if (lastRafNow === null) { lastRafNow = now; lastBeatTime = now; }
-            lastRafNow = now;
+            if (lastFrameNow === null) { lastFrameNow = now; lastBeatTime = now; }
 
-            if (!allReadings.length) return;
+            if (!allReadings.length) { lastFrameNow = now; return; }
 
-            const beatMs    = 60000 / currentBpm;
-            const elapsed   = now - lastBeatTime;
-            const beatPhase = (elapsed % beatMs) / beatMs; // 0..1
+            const beatMs = 60000 / currentBpm;
+            const dt     = now - lastFrameNow;
+            lastFrameNow = now;
 
-            // Detect beat boundary (phase wrapped from ~1 back to ~0)
-            const newBeat = beatPhase < prevBeatPhase && prevBeatPhase > 0.85;
-            prevBeatPhase = beatPhase;
+            beatPhase += dt / beatMs;
 
-            if (newBeat) {
-                // Advance carousel to next record on each heartbeat
-                lastBeatTime  = now - (elapsed % beatMs); // re-anchor
+            if (beatPhase >= 1) {
+                drawFrame(1, currentBpm);          // finish this beat fully
+                beatPhase = beatPhase - 1;         // carry over overshoot
+
                 const nextIdx = (carouselIndex + 1) % allReadings.length;
-                showCarouselItem(nextIdx);
-                // Pass progress=0 to trigger strip shift
-                drawFrame(0, currentBpm);
+                showCarouselItem(nextIdx);         // updates currentBpm for new record
+
+                lastBeatTime = now;
+                drawFrame(0, currentBpm);          // shift strip, start new slot
             } else {
                 drawFrame(beatPhase, currentBpm);
             }
