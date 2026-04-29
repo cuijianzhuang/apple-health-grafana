@@ -563,8 +563,12 @@ def heartbeat_recent():
 
 
 def _delete_existing_day_points(client: InfluxDBClient, points: list[dict]) -> None:
-    """删除睡眠相关 measurement 在相同 (tags, 当天) 范围内的旧数据。
-    睡眠分析会按分钟展开大量数据点，边界变化会留下残留点，需在重写前清除。"""
+    """写入前删除 InfluxDB 中相同 (measurement, tags, 当天) 的所有旧数据。
+
+    这是去重的核心保障：无论历史数据以何种时间戳写入（精确时间戳、
+    UTC 零点或其他归一化形式），DELETE 都会将其全部清除，再由本次导入
+    的数据原样覆盖，确保每天每个指标只保留最新一次同步的结果。
+    """
     seen: set[tuple] = set()
     for p in points:
         measurement = p.get("measurement")
@@ -648,9 +652,7 @@ def ingest():
     all_points = health_points + source_points
     try:
         client = _get_influx()
-        sleep_points = [p for p in health_points if p.get("measurement", "").startswith("Sleep")]
-        if sleep_points:
-            _delete_existing_day_points(client, sleep_points)
+        _delete_existing_day_points(client, health_points)
         client.write_points(all_points, time_precision="s")
     except Exception as err:
         log.exception("写入 InfluxDB 失败。")
