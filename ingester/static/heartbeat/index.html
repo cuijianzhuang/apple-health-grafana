@@ -289,7 +289,8 @@
     let displayedBpm = null;
     let currentBpm = 72;
     let allBpms = [];
-    let sparklineValues = [];   // actual BPM readings (chronological) for real-data mode
+    let sparklineValues = [];   // latest six BPM targets (chronological)
+    let sparklineRenderValues = []; // animated values shown on canvas
     let autoRefreshTimer = null;
     let relativeTimeInterval = null;
     let latestTimeIso = null;
@@ -327,12 +328,12 @@
     }
 
     /* ── real-data sparkline (actual BPM trend) ── */
-    function drawSparkline() {
+    function drawSparkline(animMs = 0) {
       const { w, h, startX, fadeEnd } = canvasLayout();
       ctx.clearRect(0, 0, w, h);
-      if (!sparklineValues.length) return;
+      if (!sparklineRenderValues.length) return;
 
-      const vals = sparklineValues;
+      const vals = sparklineRenderValues;
       const vmin = Math.min(...vals), vmax = Math.max(...vals);
       const span = Math.max(vmax - vmin, 10);
       const pad = 0.18;
@@ -372,10 +373,48 @@
       ctx.shadowColor = '#ff3d5a'; ctx.shadowBlur = 8;
       ctx.stroke(); ctx.shadowBlur = 0; ctx.restore();
 
-      /* dot at latest value */
+      /* moving highlight to keep waveform visually alive */
+      const hiProgress = (animMs % 1800) / 1800;
+      const hiX = startX + hiProgress * (w - startX);
+      const hiGrad = ctx.createLinearGradient(hiX - 90, 0, hiX + 90, 0);
+      hiGrad.addColorStop(0, 'rgba(255,255,255,0)');
+      hiGrad.addColorStop(0.5, 'rgba(255,180,195,0.65)');
+      hiGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.save();
       ctx.beginPath();
-      ctx.arc(toX(n - 1) + 2, toY(vals[n - 1]), 3, 0, Math.PI * 2);
+      for (let i = 0; i < n; i++) {
+        const x = toX(i), y = toY(vals[i]);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = hiGrad;
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+
+      /* dot at latest value */
+      const pulse = 2.5 + Math.sin(animMs * 0.012) * 0.9;
+      ctx.beginPath();
+      ctx.arc(toX(n - 1) + 2, toY(vals[n - 1]), pulse, 0, Math.PI * 2);
+      ctx.shadowColor = 'rgba(255,255,255,0.8)';
+      ctx.shadowBlur = 8;
       ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    function syncSparklineTargets(vals) {
+      sparklineValues = vals.slice(0, RECENT_COUNT);
+      if (sparklineRenderValues.length !== sparklineValues.length) {
+        sparklineRenderValues = sparklineValues.slice();
+      }
+    }
+
+    function animateSparklineFollow() {
+      if (!sparklineValues.length || sparklineValues.length !== sparklineRenderValues.length) return;
+      for (let i = 0; i < sparklineRenderValues.length; i++) {
+        sparklineRenderValues[i] += (sparklineValues[i] - sparklineRenderValues[i]) * 0.14;
+      }
     }
 
     /* ── heart beat animation ── */
@@ -473,6 +512,7 @@
         allBpms = [];
         resetStats();
         sparklineValues = [];
+        sparklineRenderValues = [];
         document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
         drawSparkline();
         return;
@@ -486,6 +526,7 @@
         allBpms = [];
         resetStats();
         sparklineValues = [];
+        sparklineRenderValues = [];
         document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
         drawSparkline();
         autoRefreshTimer = setInterval(() => fetchRecent(true), 30000);
@@ -508,7 +549,12 @@
       updateStats();
 
       /* sparkline uses latest six readings in chronological order */
-      sparklineValues = recentReadings.slice().reverse().map(r => Number(r.bpm)).filter(v => !isNaN(v));
+      const sparklineNextValues = recentReadings
+        .slice()
+        .reverse()
+        .map(r => Number(r.bpm))
+        .filter(v => !isNaN(v));
+      syncSparklineTargets(sparklineNextValues);
       document.getElementById('ecg-label').textContent = `最近${RECENT_COUNT}条趋势`;
       drawSparkline();
 
@@ -541,6 +587,12 @@
     function loop(now) {
       requestAnimationFrame(loop);
       if (!pageVisible) return;
+
+      /* keep trend panel animated even between data refreshes */
+      if (sparklineValues.length) {
+        animateSparklineFollow();
+        drawSparkline(now);
+      }
 
       /* heart pulses at actual BPM */
       updateHeart(now);
