@@ -7,6 +7,9 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-health}
       - GF_USERS_DEFAULT_LANGUAGE=zh-Hans
       - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3000}
+    volumes:
+      # 持久化用户/组织设置、非 provisioning 面板、告警等（默认 SQLite：/var/lib/grafana/grafana.db）
+      - grafana-data:/var/lib/grafana
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     depends_on:
@@ -15,7 +18,7 @@ services:
       - grafana-data:/var/lib/grafana
 
   influx:
-    image: influxdb:1.8
+    image: influxdb:1.12
     restart: unless-stopped
     environment:
       - INFLUXDB_DB=${INFLUX_DB:-health}
