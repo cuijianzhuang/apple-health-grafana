@@ -122,7 +122,6 @@ _DAILY_AGGREGATE_METRICS: frozenset[str] = frozenset({
     "headphone_audio_exposure",
     "uv_exposure",
 })
-
 SLEEP_DURATION_STATES: dict[str, str] = {
     "inBed": "HKCategoryValueSleepAnalysisInBed",
     "asleep": "HKCategoryValueSleepAnalysisAsleepUnspecified",
@@ -248,6 +247,11 @@ def _snake_to_measurement(name: str) -> str:
     if name in METRIC_NAME_MAP:
         return METRIC_NAME_MAP[name]
     return "".join(w.capitalize() for w in name.split("_"))
+
+
+_DAILY_AGGREGATE_MEASUREMENTS: frozenset[str] = frozenset(
+    _snake_to_measurement(name) for name in _DAILY_AGGREGATE_METRICS
+)
 
 
 def _sleep_state_from_datapoint(dp: dict[str, Any]) -> str | None:
@@ -576,6 +580,11 @@ def _delete_existing_day_points(client: InfluxDBClient, points: list[dict]) -> N
         if not measurement or ts is None:
             continue
         tags: dict = p.get("tags") or {}
+        # 每日汇总类指标的 unit 可能随导出设置变化（如 km / mi）；
+        # 若按完整 tags 删除会残留旧单位数据并产生“重复计数”。
+        # 这里对每日汇总只按 device（以及除 unit 外的其他稳定 tag）去重删除。
+        if measurement in _DAILY_AGGREGATE_MEASUREMENTS and tags:
+            tags = {k: v for k, v in tags.items() if k != "unit"}
         day_start = (int(ts) // 86400) * 86400
         key = (measurement, tuple(sorted(tags.items())), day_start)
         if key in seen:
