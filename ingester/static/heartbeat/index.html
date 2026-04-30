@@ -173,45 +173,8 @@
             z-index: 2;
         }
 
-        /* Hero progress bar — shows beat progress + offers visual continuity */
-        .hero-progress {
-            position: absolute;
-            left: 0; right: 0; bottom: 0;
-            height: 2px;
-            background: rgba(255,255,255,0.04);
-            z-index: 3;
-            overflow: hidden;
-        }
-        .hero-progress__bar {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, rgba(255,61,90,0.4), var(--red), rgba(255,143,163,0.9));
-            box-shadow: 0 0 8px var(--red-glow);
-            transform-origin: left;
-            will-change: width;
-        }
-
         /* Pause overlay state */
-        .hero-panel.is-paused .hero-progress__bar { opacity: .4; }
-        .pause-hint {
-            position: absolute;
-            top: 1rem; left: 50%;
-            transform: translateX(-50%);
-            font-family: "JetBrains Mono", monospace;
-            font-size: .6rem;
-            letter-spacing: .18em;
-            text-transform: uppercase;
-            color: var(--muted2);
-            background: rgba(14,18,26,0.85);
-            border: 1px solid var(--border);
-            padding: .25rem .6rem;
-            border-radius: 4px;
-            z-index: 4;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity .2s;
-        }
-        .hero-panel.is-paused .pause-hint { opacity: 1; }
+        .pause-hint { display: none; }
 
         /* ── Stats ── */
         .stats-row { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:1rem;background:var(--border); }
@@ -246,42 +209,6 @@
 
         /* ── Carousel ── */
         .bpm-big, .latest-time { transition: opacity .2s ease; }
-        .bpm-big.fade-swap, .latest-time.fade-swap { opacity: 0; }
-
-        .carousel-nav {
-            position: absolute;
-            bottom: .85rem;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            align-items: center;
-            gap: .85rem;
-            z-index: 3;
-        }
-        #carousel-dots { display: flex; gap: .4rem; align-items: center; }
-        .carousel-dot {
-            width: 5px; height: 5px;
-            border-radius: 50%;
-            background: var(--muted);
-            cursor: pointer;
-            transition: all .25s;
-            flex-shrink: 0;
-        }
-        .carousel-dot.active {
-            background: var(--red);
-            width: 14px;
-            border-radius: 3px;
-            box-shadow: 0 0 6px var(--red-glow);
-        }
-        #carousel-index {
-            font-family: "JetBrains Mono", monospace;
-            font-size: .58rem;
-            font-weight: 300;
-            color: var(--muted);
-            letter-spacing: .08em;
-            min-width: 2.8rem;
-            text-align: center;
-        }
 
         /* Active table row highlight */
         tr.row-active td { background: rgba(255,61,90,0.06) !important; color: var(--text); }
@@ -355,13 +282,7 @@
                 <div class="latest-time" id="latest-time">尚未加载</div>
             </div>
         </div>
-        <!-- Carousel navigation dots -->
-        <div class="carousel-nav">
-            <div id="carousel-dots"></div>
-            <span id="carousel-index"></span>
-        </div>
         <div class="pause-hint">已暂停 · 移开恢复</div>
-        <div class="hero-progress"><div class="hero-progress__bar" id="hero-progress-bar"></div></div>
     </div>
 
     <div class="stats-row">
@@ -396,7 +317,7 @@
         'use strict';
 
         /* ═══════════════════════════════════════════════════════════
-           Heart-Rate Monitor • beat-driven ECG carousel
+           Heart-Rate Monitor • beat-driven ECG
            ─────────────────────────────────────────────────────────── */
 
         const RECENT_COUNT     = 10;
@@ -404,7 +325,6 @@
         const HEART_DOM_THRESH = 0.005;  // skip DOM write if scale change < this
         const ECG_BEATS_VIS    = 8;      // beats visible across ECG strip
         const ECG_RESOLUTION   = 80;     // sub-steps per beat for waveform
-        const CAROUSEL_MIN_MS  = 1200;   // avoid overly fast record switching at high BPM
 
         /* ── DOM cache ── */
         const $ = id => document.getElementById(id);
@@ -414,9 +334,6 @@
             bigBpm:       $('big-bpm'),
             latestTime:   $('latest-time'),
             ecgLabel:     $('ecg-label'),
-            carouselIdx:  $('carousel-index'),
-            carouselDots: $('carousel-dots'),
-            progressBar:  $('hero-progress-bar'),
             pulseDot:     document.querySelector('.pulse-dot'),
             heartPath:    $('heart-path'),
             heartHalo:    $('halo'),
@@ -433,13 +350,12 @@
         /* ── state ── */
         let allReadings   = [];
         let allBpms       = [];
-        let carouselIndex = 0;
+        let selectedIndex = 0;
         let currentBpm    = 72;        // smoothed value used for animations
         let targetBpm     = 72;        // current record's true BPM
         let displayedBpm  = null;      // BPM number shown
         let latestTimeIso = null;
         let pageVisible   = true;
-        let isPaused      = false;     // hover-pause state
         let autoRefreshTimer     = null;
         let relativeTimeInterval = null;
 
@@ -741,51 +657,29 @@
             requestAnimationFrame(step);
         }
 
-        /* ── Carousel: jump to record idx ── */
-        let dotEls = [], rowEls = [];
+        /* ── Select record idx ── */
+        let rowEls = [];
 
-        function showCarouselItem(idx, animate = true) {
+        function showSelectedItem(idx) {
             if (!allReadings.length) return;
             const len = allReadings.length;
             idx = ((idx % len) + len) % len;
-            carouselIndex = idx;
+            selectedIndex = idx;
             const r   = allReadings[idx];
             const bpm = Number(r.bpm) || 72;
             targetBpm     = bpm;
             latestTimeIso = r.time;
-
-            const updateText = () => {
-                animateBpm(bpm);
-                dom.latestTime.textContent = fmtRelativeTime(latestTimeIso);
-                dom.carouselIdx.textContent = `${idx + 1} / ${len}`;
-            };
-
-            if (animate) {
-                // Ensure value swap remains readable when record interval is short
-                dom.bigBpm.classList.add('fade-swap');
-                dom.latestTime.classList.add('fade-swap');
-                setTimeout(() => {
-                    updateText();
-                    dom.bigBpm.classList.remove('fade-swap');
-                    dom.latestTime.classList.remove('fade-swap');
-                }, 120);
-            } else {
-                updateText();
-            }
+            animateBpm(bpm);
+            dom.latestTime.textContent = fmtRelativeTime(latestTimeIso);
 
             // Use cached element arrays (no querySelectorAll per call)
             for (let i = 0; i < rowEls.length; i++) {
                 rowEls[i].classList.toggle('row-active', i === idx);
             }
-            for (let i = 0; i < dotEls.length; i++) {
-                dotEls[i].classList.toggle('active', i === idx);
-            }
-
             const active = rowEls[idx];
             if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
 
-        /* ── Jump carousel to specific index, fully reset ECG state ── */
         function jumpTo(idx) {
             const r = allReadings[idx];
             if (!r) return;
@@ -797,7 +691,7 @@
             currentBpm    = newBpm;
             targetBpm     = newBpm;
             beatBpmLocked = newBpm;
-            showCarouselItem(idx);
+            showSelectedItem(idx);
         }
 
         /* ── Helpers ── */
@@ -852,15 +746,13 @@
             clearInterval(autoRefreshTimer);
             clearInterval(relativeTimeInterval);
             dom.rows.innerHTML = '';
-            dotEls = []; rowEls = [];
+            rowEls = [];
 
             const recent = readings.length ? pickRecentReadings(readings) : [];
 
             if (!recent.length) {
                 animateBpm(null);
                 dom.latestTime.textContent = '暂无心率记录';
-                dom.carouselIdx.textContent = '';
-                dom.carouselDots.innerHTML = '';
                 dom.ecgLabel.textContent = '心率趋势';
                 allReadings = []; allBpms = [];
                 resetStats();
@@ -872,18 +764,6 @@
             allBpms     = allReadings.map(r => Number(r.bpm)).filter(v => !isNaN(v));
             updateStats();
             dom.ecgLabel.textContent = `最近 ${allReadings.length} 条`;
-
-            // Build carousel dots
-            const dotsFrag = document.createDocumentFragment();
-            allReadings.forEach((_, i) => {
-                const d = document.createElement('span');
-                d.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-                d.addEventListener('click', () => { jumpTo(i); });
-                dotsFrag.appendChild(d);
-                dotEls.push(d);
-            });
-            dom.carouselDots.innerHTML = '';
-            dom.carouselDots.appendChild(dotsFrag);
 
             // Build table rows
             const rowsFrag = document.createDocumentFragment();
@@ -898,11 +778,11 @@
             });
             dom.rows.appendChild(rowsFrag);
 
-            carouselIndex = 0;
+            selectedIndex = 0;
             currentBpm = targetBpm = Number(allReadings[0].bpm) || 72;
-            showCarouselItem(0, false);
+            showSelectedItem(0);
 
-            // Refresh relative-time text every minute (matches current carousel item)
+            // Refresh relative-time text every minute
             relativeTimeInterval = setInterval(() => {
                 dom.latestTime.textContent = fmtRelativeTime(latestTimeIso);
             }, 60000);
@@ -952,21 +832,12 @@
             const lerpAmt = 1 - Math.pow(1 - BPM_LERP_RATE, dt / 16.67);
             currentBpm += (targetBpm - currentBpm) * lerpAmt;
 
-            if (isPaused) {
-                compositeFrame(beatPhase, beatBpmLocked);
-                updateHeart();
-                return;
-            }
-
             const beatMs = 60000 / Math.max(1, beatBpmLocked || currentBpm);
-            const displayBeatMs = Math.max(CAROUSEL_MIN_MS, beatMs);
-            beatPhase += dt / displayBeatMs;
-
-            dom.progressBar.style.width = Math.min(100, beatPhase * 100) + '%';
+            beatPhase += dt / beatMs;
 
             // First frame: open the first slot for the currently-displayed record
             if (firstFrame || prevPathPt === null) {
-                beatBpmLocked = Number(allReadings[carouselIndex].bpm) || currentBpm;
+                beatBpmLocked = Number(allReadings[selectedIndex].bpm) || currentBpm;
                 targetBpm     = beatBpmLocked;
                 currentBpm    = beatBpmLocked;
                 const complexW = ecgW / ECG_BEATS_VIS;
@@ -984,20 +855,14 @@
                 drawEcgSegment(beatBpmLocked, beatBpmLocked, 1, false);
                 compositeFrame(1, beatBpmLocked);
 
-                // 2. Carry overshoot phase, advance carousel
+                // 2. Carry overshoot phase
                 beatPhase = Math.max(0, beatPhase - 1);
-                const nextIdx = (carouselIndex + 1) % allReadings.length;
+                // 3. Keep using selected record BPM for continuous line
+                beatBpmLocked = Number(allReadings[selectedIndex].bpm) || 72;
+                targetBpm     = beatBpmLocked;
+                currentBpm    = beatBpmLocked;
 
-                // 3. Lock the new beat's BPM to that record's actual BPM (snap, no lerp lag)
-                const newBpm = Number(allReadings[nextIdx].bpm) || 72;
-                beatBpmLocked = newBpm;
-                targetBpm     = newBpm;
-                currentBpm    = newBpm;
-
-                // 4. Switch hero display NOW (synced with new slot opening)
-                showCarouselItem(nextIdx);
-
-                // 5. Shift strip and start a fresh slot for this record
+                // 4. Shift strip and start a fresh slot for this record
                 const complexW = ecgW / ECG_BEATS_VIS;
                 shiftStrip(complexW);
                 drawEcgSegment(beatBpmLocked, beatBpmLocked, beatPhase, true);
@@ -1023,16 +888,6 @@
         });
 
         dom.btnRefresh.addEventListener('click', () => fetchRecent(false));
-
-        // Hover-pause carousel
-        dom.panel.addEventListener('mouseenter', () => {
-            isPaused = true;
-            dom.panel.classList.add('is-paused');
-        });
-        dom.panel.addEventListener('mouseleave', () => {
-            isPaused = false;
-            dom.panel.classList.remove('is-paused');
-        });
 
         // Resize: re-init canvas (debounced via rAF)
         let resizeRaf = null;
