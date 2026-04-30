@@ -444,7 +444,7 @@
 
         /* ── canvas + offscreen strip ── */
         let ecgBuf = null, ecgBufCtx = null;
-        let ecgW = 0, ecgH = 0, ecgX0 = 0, dpr = 1;
+        let ecgW = 0, ecgH = 0, ecgX0 = 0;
 
         /* Beat tracking (rAF-driven) */
         let beatPhase    = 0;          // 0..1 within current beat
@@ -455,39 +455,30 @@
         /* Heart cache to skip DOM writes */
         let heartScale = 1, lastHeartScale = -1;
 
-        /* ── Init canvas (handles HiDPI) ── */
+        /* ── Init canvas (1:1 CSS pixels — keeps math simple, looks fine on retina at this size) ── */
         function initCanvas() {
             const panel = dom.canvas.parentElement;
             const cssW = Math.max(panel.offsetWidth, 100);
             const cssH = Math.max(panel.offsetHeight, 100);
-            dpr = window.devicePixelRatio || 1;
 
-            dom.canvas.width  = Math.round(cssW * dpr);
-            dom.canvas.height = Math.round(cssH * dpr);
-            dom.canvas.style.width  = cssW + 'px';
-            dom.canvas.style.height = cssH + 'px';
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            dom.canvas.width  = cssW;
+            dom.canvas.height = cssH;
 
             const leftW = Math.round(cssW * 0.325);
             ecgX0 = leftW;
             ecgW  = cssW - leftW;
             ecgH  = cssH;
 
-            // Offscreen strip (DPR-aware)
-            const bufW = Math.round(ecgW * dpr);
-            const bufH = Math.round(ecgH * dpr);
+            // Offscreen strip — same dims as ECG zone
             try {
-                ecgBuf    = new OffscreenCanvas(bufW, bufH);
+                ecgBuf    = new OffscreenCanvas(ecgW, ecgH);
                 ecgBufCtx = ecgBuf.getContext('2d');
             } catch (_) {
                 ecgBuf = document.createElement('canvas');
-                ecgBuf.width = bufW; ecgBuf.height = bufH;
+                ecgBuf.width = ecgW; ecgBuf.height = ecgH;
                 ecgBufCtx = ecgBuf.getContext('2d');
             }
-            ecgBufCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
-
-            // Pre-paint a faint grid across the entire strip so it doesn't appear empty
             paintGridFull();
             drawnSteps = 0;
             prevPathPt = null;
@@ -557,18 +548,24 @@
             return Math.max(0.15, Math.min(1.0, (bpm - 40) / 110));
         }
 
-        /* ── Shift the strip left by complexW pixels (called once per beat at progress=0) ── */
+        /* ── Shift the strip left by complexW pixels (called once per beat) ──
+           Drawing a canvas onto itself is unreliable; copy via temp canvas. */
+        let shiftScratch = null;
         function shiftStrip(complexW) {
-            // Use drawImage on self for a shift — works in OffscreenCanvas
-            const c = ecgBufCtx;
-            c.save();
-            c.setTransform(1, 0, 0, 1, 0, 0);  // shift in device pixels
-            c.globalCompositeOperation = 'copy';
-            c.drawImage(ecgBuf, -Math.round(complexW * dpr), 0);
-            c.globalCompositeOperation = 'source-over';
-            c.setTransform(dpr, 0, 0, dpr, 0, 0);
-            c.restore();
-            // Clear & paint fresh grid in the new rightmost slot
+            const shift = Math.round(complexW);
+            if (!shiftScratch || shiftScratch.width !== ecgW || shiftScratch.height !== ecgH) {
+                shiftScratch = document.createElement('canvas');
+                shiftScratch.width  = ecgW;
+                shiftScratch.height = ecgH;
+            }
+            const sctx = shiftScratch.getContext('2d');
+            sctx.clearRect(0, 0, ecgW, ecgH);
+            sctx.drawImage(ecgBuf, 0, 0);
+
+            ecgBufCtx.clearRect(0, 0, ecgW, ecgH);
+            ecgBufCtx.drawImage(shiftScratch, -shift, 0);
+
+            // Paint fresh grid in the new rightmost slot
             const slotX = ecgW - complexW;
             ecgBufCtx.clearRect(slotX, 0, complexW + 1, ecgH);
             paintGridSlot(slotX, complexW);
@@ -621,15 +618,13 @@
 
         /* ── Composite frame onto main canvas ── */
         function compositeFrame(progress, beatBpmCached) {
-            ctx.clearRect(0, 0, dom.canvas.width / dpr, dom.canvas.height / dpr);
+            ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
             if (!ecgBuf) return;
 
-            const beatsVisible = ECG_BEATS_VIS;
-            const complexW     = ecgW / beatsVisible;
+            const complexW = ecgW / ECG_BEATS_VIS;
 
-            // Blit buffer (DPR-aware)
-            ctx.drawImage(ecgBuf, 0, 0, ecgBuf.width, ecgBuf.height,
-                ecgX0, 0, ecgW, ecgH);
+            // Blit buffer at ecgX0 (1:1 — no scaling)
+            ctx.drawImage(ecgBuf, ecgX0, 0);
 
             // Soft red area-fill under the visible waveform area (cheap full-strip overlay)
             // — kept lightweight, applied only over the strip
@@ -788,6 +783,18 @@
             if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
 
+        /* ── Jump carousel to specific index, fully reset ECG state ── */
+        function jumpTo(idx) {
+            beatPhase = 0;
+            prevPathPt = null;          // force re-anchor on next loop frame
+            drawnSteps = 0;
+            showCarouselItem(idx);
+            // Snap currentBpm to target so the new beat draws at the right amplitude
+            const r = allReadings[idx];
+            if (r) currentBpm = Number(r.bpm) || 72;
+            beatBpmLocked = currentBpm;
+        }
+
         /* ── Helpers ── */
         function fmtTime(iso) {
             if (!iso) return '—';
@@ -866,7 +873,7 @@
             allReadings.forEach((_, i) => {
                 const d = document.createElement('span');
                 d.className = 'carousel-dot' + (i === 0 ? ' active' : '');
-                d.addEventListener('click', () => { beatPhase = 0; showCarouselItem(i); });
+                d.addEventListener('click', () => { jumpTo(i); });
                 dotsFrag.appendChild(d);
                 dotEls.push(d);
             });
@@ -880,7 +887,7 @@
                 const tr   = document.createElement('tr');
                 if (i === 0) tr.classList.add('row-active');
                 tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
-                tr.addEventListener('click', () => { beatPhase = 0; showCarouselItem(i); });
+                tr.addEventListener('click', () => { jumpTo(i); });
                 rowsFrag.appendChild(tr);
                 rowEls.push(tr);
             });
@@ -929,7 +936,8 @@
         function loop(now) {
             requestAnimationFrame(loop);
             if (!pageVisible) { lastFrameNow = null; return; }
-            if (lastFrameNow === null) { lastFrameNow = now; beatBpmLocked = currentBpm; }
+            const firstFrame = lastFrameNow === null;
+            if (firstFrame) { lastFrameNow = now; beatBpmLocked = currentBpm; }
             const dt = now - lastFrameNow;
             lastFrameNow = now;
 
@@ -941,7 +949,7 @@
             currentBpm += (targetBpm - currentBpm) * lerpAmt;
 
             if (isPaused) {
-                // Hold the current frame, no advance
+                // Hold current frame, no advance
                 compositeFrame(beatPhase, beatBpmLocked);
                 updateHeart();
                 return;
@@ -950,8 +958,18 @@
             const beatMs = 60000 / Math.max(1, currentBpm);
             beatPhase += dt / beatMs;
 
-            // Update progress bar (CSS width transition kept off for direct control)
+            // Update progress bar
             dom.progressBar.style.width = Math.min(100, beatPhase * 100) + '%';
+
+            // First frame after data load (or canvas reset) — initialize the path anchor
+            if (firstFrame || prevPathPt === null) {
+                const complexW = ecgW / ECG_BEATS_VIS;
+                shiftStrip(complexW);
+                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, true);
+                compositeFrame(beatPhase, beatBpmLocked);
+                updateHeart();
+                return;
+            }
 
             if (beatPhase >= 1) {
                 // Finish current beat fully (draw remainder)
@@ -962,7 +980,7 @@
                 beatPhase -= 1;
                 const nextIdx = (carouselIndex + 1) % allReadings.length;
                 showCarouselItem(nextIdx);
-                // Re-anchor BPM lock for the new beat (use smoothed current — will lerp toward target)
+                // Lock BPM at start of new beat
                 beatBpmLocked = currentBpm;
 
                 // Shift strip and start fresh slot
