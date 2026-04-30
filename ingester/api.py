@@ -580,11 +580,11 @@ def _delete_existing_day_points(client: InfluxDBClient, points: list[dict]) -> N
         if not measurement or ts is None:
             continue
         tags: dict = p.get("tags") or {}
-        # 每日汇总类指标的 unit 可能随导出设置变化（如 km / mi）；
-        # 若按完整 tags 删除会残留旧单位数据并产生“重复计数”。
-        # 这里对每日汇总只按 device（以及除 unit 外的其他稳定 tag）去重删除。
+        # 每日汇总类指标（步数、步行/跑步距离等）在 Health App 里本质上是“当天总量”，
+        # 不应按 source/device 分片累加。若按完整 tags 删除，source 或 unit 变化时会残留
+        # 旧点，导致同一天被重复计算。这里对每日汇总直接按 measurement+day 全量覆盖。
         if measurement in _DAILY_AGGREGATE_MEASUREMENTS and tags:
-            tags = {k: v for k, v in tags.items() if k != "unit"}
+            tags = {}
         day_start = (int(ts) // 86400) * 86400
         key = (measurement, tuple(sorted(tags.items())), day_start)
         if key in seen:
