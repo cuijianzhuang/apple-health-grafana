@@ -404,6 +404,7 @@
         const HEART_DOM_THRESH = 0.005;  // skip DOM write if scale change < this
         const ECG_BEATS_VIS    = 8;      // beats visible across ECG strip
         const ECG_RESOLUTION   = 80;     // sub-steps per beat for waveform
+        const CAROUSEL_MIN_MS  = 1200;   // avoid overly fast record switching at high BPM
 
         /* ── DOM cache ── */
         const $ = id => document.getElementById(id);
@@ -760,13 +761,14 @@
             };
 
             if (animate) {
+                // Ensure value swap remains readable when record interval is short
                 dom.bigBpm.classList.add('fade-swap');
                 dom.latestTime.classList.add('fade-swap');
                 setTimeout(() => {
                     updateText();
                     dom.bigBpm.classList.remove('fade-swap');
                     dom.latestTime.classList.remove('fade-swap');
-                }, 160);
+                }, 120);
             } else {
                 updateText();
             }
@@ -957,7 +959,8 @@
             }
 
             const beatMs = 60000 / Math.max(1, beatBpmLocked || currentBpm);
-            beatPhase += dt / beatMs;
+            const displayBeatMs = Math.max(CAROUSEL_MIN_MS, beatMs);
+            beatPhase += dt / displayBeatMs;
 
             dom.progressBar.style.width = Math.min(100, beatPhase * 100) + '%';
 
