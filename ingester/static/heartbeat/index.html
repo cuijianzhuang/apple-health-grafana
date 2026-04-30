@@ -191,6 +191,9 @@
         .section-label::after { content:"";flex:1;height:1px;background:var(--border); }
 
         .table-card { border:1px solid var(--border);border-radius:14px;overflow:hidden; }
+        .table-scroll { max-height: 360px; overflow: auto; }
+        .table-scroll::-webkit-scrollbar { width:8px; }
+        .table-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:8px; }
         table { width:100%;border-collapse:collapse; }
         thead tr { border-bottom:1px solid var(--border); }
         th { padding:.7rem 1.25rem;text-align:left;font-size:.62rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);background:rgba(255,255,255,.02); }
@@ -302,10 +305,12 @@
 
     <div class="section-label">历史记录</div>
     <div class="table-card">
+        <div class="table-scroll">
         <table>
-            <thead><tr><th>时间</th><th style="text-align:right;">心率 (BPM)</th></tr></thead>
+            <thead><tr><th>时间</th><th>距今</th><th style="text-align:right;">心率 (BPM)</th></tr></thead>
             <tbody id="rows"></tbody>
         </table>
+        </div>
         <div class="err" id="err" hidden></div>
     </div>
 
@@ -320,7 +325,7 @@
            Heart-Rate Monitor • beat-driven ECG
            ─────────────────────────────────────────────────────────── */
 
-        const RECENT_COUNT     = 10;
+        const RECENT_COUNT     = 80;
         const BPM_LERP_RATE    = 0.08;   // smoothing for currentBpm transitions
         const HEART_DOM_THRESH = 0.005;  // skip DOM write if scale change < this
         const ECG_BEATS_VIS    = 8;      // beats visible across ECG strip
@@ -771,7 +776,7 @@
                 const bVal = r.bpm != null ? Math.round(r.bpm) : null;
                 const tr   = document.createElement('tr');
                 if (i === 0) tr.classList.add('row-active');
-                tr.innerHTML = `<td>${fmtTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
+                tr.innerHTML = `<td>${fmtTime(r.time)}</td><td>${fmtRelativeTime(r.time)}</td><td><span class="bpm-row-val ${bpmCat(bVal)}"><span class="bpm-row-dot"></span>${bVal ?? '—'}</span></td>`;
                 tr.addEventListener('click', () => { jumpTo(i); });
                 rowsFrag.appendChild(tr);
                 rowEls.push(tr);
@@ -799,7 +804,7 @@
             const btn = dom.btnRefresh;
             if (!silent) { btn.disabled = true; btn.textContent = '加载中…'; }
             try {
-                const res  = await fetch('/api/heartbeat/recent?limit=10');
+                const res  = await fetch(`/api/heartbeat/recent?limit=${RECENT_COUNT}`);
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) {
                     showError(data.error || data.detail || '请求失败 ' + res.status);
