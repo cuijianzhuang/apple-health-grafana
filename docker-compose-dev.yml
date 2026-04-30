@@ -5,6 +5,8 @@ services:
       - GF_USERS_DEFAULT_LANGUAGE=zh-Hans
     ports:
     - 3000:3000
+    volumes:
+    - grafana-data:/var/lib/grafana
   influx:
     image: influxdb:1.8
     environment:
@@ -32,3 +34,5 @@ services:
 
 volumes:
   influx-data:
+  grafana-data:
+
