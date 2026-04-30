@@ -785,14 +785,17 @@
 
         /* ── Jump carousel to specific index, fully reset ECG state ── */
         function jumpTo(idx) {
-            beatPhase = 0;
-            prevPathPt = null;          // force re-anchor on next loop frame
-            drawnSteps = 0;
-            showCarouselItem(idx);
-            // Snap currentBpm to target so the new beat draws at the right amplitude
             const r = allReadings[idx];
-            if (r) currentBpm = Number(r.bpm) || 72;
-            beatBpmLocked = currentBpm;
+            if (!r) return;
+            const newBpm = Number(r.bpm) || 72;
+            // Snap state — the next loop iteration will open a fresh slot for this record
+            beatPhase     = 0;
+            prevPathPt    = null;
+            drawnSteps    = 0;
+            currentBpm    = newBpm;
+            targetBpm     = newBpm;
+            beatBpmLocked = newBpm;
+            showCarouselItem(idx);
         }
 
         /* ── Helpers ── */
@@ -937,59 +940,67 @@
             requestAnimationFrame(loop);
             if (!pageVisible) { lastFrameNow = null; return; }
             const firstFrame = lastFrameNow === null;
-            if (firstFrame) { lastFrameNow = now; beatBpmLocked = currentBpm; }
+            if (firstFrame) { lastFrameNow = now; }
             const dt = now - lastFrameNow;
             lastFrameNow = now;
 
             if (!allReadings.length) return;
 
-            // Smoothly interpolate currentBpm toward targetBpm (no abrupt jumps)
-            // Lerp rate is dt-aware so it's framerate-independent.
+            // Smooth currentBpm toward targetBpm (used only between beats — gets snapped at beat start)
             const lerpAmt = 1 - Math.pow(1 - BPM_LERP_RATE, dt / 16.67);
             currentBpm += (targetBpm - currentBpm) * lerpAmt;
 
             if (isPaused) {
-                // Hold current frame, no advance
                 compositeFrame(beatPhase, beatBpmLocked);
                 updateHeart();
                 return;
             }
 
-            const beatMs = 60000 / Math.max(1, currentBpm);
+            const beatMs = 60000 / Math.max(1, beatBpmLocked || currentBpm);
             beatPhase += dt / beatMs;
 
-            // Update progress bar
             dom.progressBar.style.width = Math.min(100, beatPhase * 100) + '%';
 
-            // First frame after data load (or canvas reset) — initialize the path anchor
+            // First frame: open the first slot for the currently-displayed record
             if (firstFrame || prevPathPt === null) {
+                beatBpmLocked = Number(allReadings[carouselIndex].bpm) || currentBpm;
+                targetBpm     = beatBpmLocked;
+                currentBpm    = beatBpmLocked;
                 const complexW = ecgW / ECG_BEATS_VIS;
                 shiftStrip(complexW);
-                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, true);
+                beatPhase = 0;
+                drawEcgSegment(beatBpmLocked, beatBpmLocked, beatPhase, true);
                 compositeFrame(beatPhase, beatBpmLocked);
                 updateHeart();
                 return;
             }
 
             if (beatPhase >= 1) {
-                // Finish current beat fully (draw remainder)
-                drawEcgSegment(currentBpm, beatBpmLocked, 1, false);
+                // ─── Beat complete ───
+                // 1. Draw the final segment to fill the slot completely
+                drawEcgSegment(beatBpmLocked, beatBpmLocked, 1, false);
                 compositeFrame(1, beatBpmLocked);
 
-                // Carry overshoot, switch to next record
-                beatPhase -= 1;
+                // 2. Carry overshoot phase, advance carousel
+                beatPhase = Math.max(0, beatPhase - 1);
                 const nextIdx = (carouselIndex + 1) % allReadings.length;
-                showCarouselItem(nextIdx);
-                // Lock BPM at start of new beat
-                beatBpmLocked = currentBpm;
 
-                // Shift strip and start fresh slot
+                // 3. Lock the new beat's BPM to that record's actual BPM (snap, no lerp lag)
+                const newBpm = Number(allReadings[nextIdx].bpm) || 72;
+                beatBpmLocked = newBpm;
+                targetBpm     = newBpm;
+                currentBpm    = newBpm;
+
+                // 4. Switch hero display NOW (synced with new slot opening)
+                showCarouselItem(nextIdx);
+
+                // 5. Shift strip and start a fresh slot for this record
                 const complexW = ecgW / ECG_BEATS_VIS;
                 shiftStrip(complexW);
-                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, true);
+                drawEcgSegment(beatBpmLocked, beatBpmLocked, beatPhase, true);
                 compositeFrame(beatPhase, beatBpmLocked);
             } else {
-                drawEcgSegment(currentBpm, beatBpmLocked, beatPhase, false);
+                drawEcgSegment(beatBpmLocked, beatBpmLocked, beatPhase, false);
                 compositeFrame(beatPhase, beatBpmLocked);
             }
 
