@@ -11,6 +11,8 @@ services:
       - "${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - influx
+    volumes:
+      - grafana-data:/var/lib/grafana
 
   influx:
     image: influxdb:1.8
@@ -44,3 +46,4 @@ services:
 
 volumes:
   influx-data:
+  grafana-data:
